@@ -280,17 +280,35 @@ def send_email(
             msg.attach(part)
             log.info("Attached spreadsheet: %s", attachment.name)
 
-        with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(config.SMTP_USER, config.SMTP_PASSWORD)
-            server.sendmail(config.EMAIL_FROM, config.EMAIL_TO, msg.as_string())
+        if config.SMTP_PORT == 465:
+            # SSL from the start (port 465)
+            import ssl
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT, context=context) as server:
+                server.ehlo()
+                server.login(config.SMTP_USER, config.SMTP_PASSWORD)
+                server.sendmail(config.EMAIL_FROM, config.EMAIL_TO, msg.as_string())
+        else:
+            # STARTTLS (port 587) — correct sequence:
+            # connect -> ehlo -> starttls -> ehlo again -> login -> send
+            with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(config.SMTP_USER, config.SMTP_PASSWORD)
+                server.sendmail(config.EMAIL_FROM, config.EMAIL_TO, msg.as_string())
 
         log.info("Email sent to: %s", ", ".join(config.EMAIL_TO))
         return True
 
     except smtplib.SMTPAuthenticationError:
-        log.error("SMTP authentication failed. Check SMTP_USER / SMTP_PASSWORD in .env")
+        log.error(
+            "SMTP authentication failed. "
+            "For Gmail use an App Password (not your account password): "
+            "https://myaccount.google.com/apppasswords"
+        )
+    except smtplib.SMTPServerDisconnected as e:
+        log.error("SMTP server disconnected: %s — check SMTP_HOST / SMTP_PORT in .env", e)
     except smtplib.SMTPException as e:
         log.error("SMTP error: %s", e)
     except Exception as e:
