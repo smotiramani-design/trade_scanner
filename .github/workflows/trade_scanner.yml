@@ -17,14 +17,14 @@ name: Trading Signal Scanner
 # The job itself guards against this with a market-hours check.
 
 on:
-  schedule:
-    - cron: "35 13 * * 1-5"   #  9:35 AM ET
-    - cron: "35 14 * * 1-5"   # 10:35 AM ET
-    - cron: "35 15 * * 1-5"   # 11:35 AM ET
-    - cron: "35 16 * * 1-5"   # 12:35 PM ET
-    - cron: "35 17 * * 1-5"   #  1:35 PM ET
-    - cron: "35 18 * * 1-5"   #  2:35 PM ET
-    - cron: "35 19 * * 1-5"   #  3:35 PM ET
+  # schedule:
+  #   - cron: "35 13 * * 1-5"   #  9:35 AM ET
+  #   - cron: "35 14 * * 1-5"   # 10:35 AM ET
+  #   - cron: "35 15 * * 1-5"   # 11:35 AM ET
+  #   - cron: "35 16 * * 1-5"   # 12:35 PM ET
+  #   - cron: "35 17 * * 1-5"   #  1:35 PM ET
+  #   - cron: "35 18 * * 1-5"   #  2:35 PM ET
+  #   - cron: "35 19 * * 1-5"   #  3:35 PM ET
 
   # Allow manual trigger from the Actions tab for testing
   workflow_dispatch:
