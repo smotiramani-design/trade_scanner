@@ -24,10 +24,13 @@ from typing import List, Tuple
 
 from signals.base import Bias, SignalResult, TickerAnalysis
 
-WEIGHTS: List[float] = [1.5, 1.5, 1.0, 1.0, 1.2, 1.2, 1.6]
-MAX_WEIGHTED = sum(WEIGHTS)   # 9.0
+#                      Candle  Vol   SMA   Gaps  Stoch  CCI  RoleRev  RS    VWAP  News
+WEIGHTS: List[float] = [1.5,   1.5,  1.0,  1.0,  1.2,  1.2,  1.6,   1.3,  1.1,  0.9]
+MAX_WEIGHTED = sum(WEIGHTS)   # 12.3 (10 signals)
 
-SIG_NAMES = [
+# Import from __init__ to keep a single source of truth
+# (conviction.py uses long-form names for analysis text)
+SIG_NAMES_LONG = [
     "Candle pattern",
     "Volume",
     "SMA divergence",
@@ -35,7 +38,11 @@ SIG_NAMES = [
     "Stochastics",
     "CCI",
     "Role reversal",
+    "Rel. Strength",   # ENH-09
+    "VWAP",            # ENH-12
+    "News sentiment",  # ENH-18
 ]
+SIG_NAMES = SIG_NAMES_LONG  # alias for backward compat
 
 
 @dataclass
@@ -171,6 +178,19 @@ def score_conviction(ta: TickerAnalysis) -> ConvictionScore:
                 key_signals.append(f"{lbl} ({sig.label})")
 
     commentary = _commentary(ta, ws, direction, key_signals, conflicts)
+
+    # ENH-16: Multi-timeframe penalty
+    from signals.multi_timeframe import mtf_conviction_multiplier
+    mtf_mult = mtf_conviction_multiplier(getattr(ta, "mtf_aligned", True))
+    if mtf_mult < 1.0:
+        conviction_pct = round(conviction_pct * mtf_mult, 1)
+        grade_order = ["A+", "A", "B", "C", "D"]
+        if grade in grade_order and grade_order.index(grade) < len(grade_order) - 1:
+            grade = grade_order[grade_order.index(grade) + 1]
+
+    # ENH-11: Earnings warning
+    if getattr(ta, "earnings_soon", False):
+        commentary = "⚠ EARNINGS WITHIN 2 DAYS — elevated gap risk. " + commentary
 
     return ConvictionScore(
         ticker=ta.ticker,

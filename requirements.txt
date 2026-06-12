@@ -1,16 +1,34 @@
-# Core
-python-dotenv>=1.0.0
-requests>=2.31.0
-pandas>=2.1.0
-numpy>=1.26.0
-yfinance>=0.2.36
+# ── Core data & computation ───────────────────────────────────────────────────
+python-dotenv>=1.0.0          # .env file loading
+requests>=2.31.0              # FMP REST API calls
+pandas>=2.1.0                 # DataFrame operations (yfinance dependency)
+numpy>=1.26.0                 # Numerical computation
+yfinance>=0.2.36              # Yahoo Finance OHLCV bars (fallback + backtesting)
 
-# CLI / display
-rich>=13.7.0
-click>=8.1.7
+# ── Timezone handling ─────────────────────────────────────────────────────────
+# pytz is a fallback for Python < 3.9 where zoneinfo is unavailable.
+# Python 3.11 (required) has zoneinfo in stdlib — pytz kept for compatibility.
+pytz>=2024.1
 
-# Spreadsheet
-openpyxl>=3.1.2
+# ── CLI / display ─────────────────────────────────────────────────────────────
+rich>=13.7.0                  # Terminal tables, progress bars, colored output
+click>=8.1.7                  # CLI argument parsing
 
-# SMS (optional — only needed if SMS_ENABLED=true)
-twilio>=8.10.0
+# ── Output / reporting ────────────────────────────────────────────────────────
+openpyxl>=3.1.2               # Excel (.xlsx) workbook generation
+
+# ── Alpaca paper trading ──────────────────────────────────────────────────────
+# Sign up free at alpaca.markets → Paper Trading → API Keys
+alpaca-py>=0.30.0             # Alpaca TradingClient — bracket orders, positions, account
+
+# ── Web dashboard (ENH-22) ────────────────────────────────────────────────────
+# Required only to run the FastAPI backend (web/api.py)
+# Install with: pip install fastapi uvicorn[standard]
+fastapi>=0.111.0              # REST API framework
+uvicorn[standard]>=0.30.0     # ASGI server (includes websockets, httptools)
+
+# ── SMS alerts (optional) ─────────────────────────────────────────────────────
+# Only required if SMS notifications are configured in .env (TWILIO_* vars).
+# Lazy-imported in utils/sms_sender.py — won't cause ImportError if not installed.
+# Install with: pip install twilio
+# twilio>=8.0.0

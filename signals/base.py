@@ -1,9 +1,10 @@
 """
 signals/base.py — shared types used by every signal module.
 """
+from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 
 class Bias(str, Enum):
@@ -29,13 +30,19 @@ class SignalResult:
 
 @dataclass
 class TickerAnalysis:
-    ticker:   str
-    price:    float
-    chg_pct:  float
-    volume:   float
-    bars:     int
-    mode:     str                      # "Hourly" | "Daily"
-    signals:  List[SignalResult] = field(default_factory=list)
+    ticker:       str
+    price:        float
+    chg_pct:      float
+    volume:       float
+    bars:         int
+    mode:         str                       # "Hourly" | "Daily"
+    company_name: str = ""                  # e.g. "Apple Inc."
+    signals:      List[SignalResult] = field(default_factory=list)
+    fib:          Optional[object]   = field(default=None, repr=False)  # FibLevels | None
+    atr_stop:     Optional[float]    = field(default=None, repr=False)  # ENH-10 ATR stop
+    mtf_aligned:  bool               = field(default=True,  repr=False)  # ENH-16 MTF flag
+    mtf_detail:   str                = field(default="",    repr=False)  # ENH-16 MTF detail
+    earnings_soon:bool               = field(default=False, repr=False)  # ENH-11 earnings flag
 
     @property
     def bull_count(self) -> int:

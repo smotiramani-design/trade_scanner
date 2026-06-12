@@ -1,5 +1,6 @@
 """
 utils/exporter.py — saves TickerAnalysis results to CSV / JSON.
+Includes Fibonacci level columns when available.
 """
 import csv
 import json
@@ -17,8 +18,9 @@ SIG_NAMES = ["Candle", "Volume", "SMA", "Gaps", "Stoch", "CCI", "RR"]
 
 def _row(ta: TickerAnalysis) -> dict:
     row = {
-        "ticker":    ta.ticker,
-        "price":     round(ta.price, 2)   if ta.price  else "",
+        "ticker":       ta.ticker,
+        "company_name": ta.company_name,
+        "price":        round(ta.price, 2)   if ta.price   else "",
         "chg_pct":   round(ta.chg_pct, 2) if ta.chg_pct else "",
         "net_score": ta.net_score,
         "bull":      ta.bull_count,
@@ -31,12 +33,27 @@ def _row(ta: TickerAnalysis) -> dict:
         key = SIG_NAMES[i] if i < len(SIG_NAMES) else f"sig_{i}"
         row[key] = sig.bias.value
         row[f"{key}_label"] = sig.label
+
+    # ── Fibonacci columns ─────────────────────────────────────────────────────
+    if ta.fib:
+        row.update(ta.fib.to_dict())
+    else:
+        row.update({
+            "fib_anchor":       "",
+            "fib_swing_high":   "",
+            "fib_swing_low":    "",
+            "fib_direction":    "",
+            "fib_next_target":  "",
+            "fib_next_label":   "",
+            "fib_support_1":    "",
+            "fib_resistance_1": "",
+        })
     return row
 
 
 def save_results(results: List[TickerAnalysis], tag: str = "") -> Path:
-    ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stem  = f"scan_{tag}_{ts}" if tag else f"scan_{ts}"
+    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stem = f"scan_{tag}_{ts}" if tag else f"scan_{ts}"
     saved = []
 
     if config.SAVE_CSV:

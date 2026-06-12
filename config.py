@@ -55,14 +55,7 @@ EMAIL_TO: list       = _list("EMAIL_TO")
 EMAIL_SUBJECT: str   = _get("EMAIL_SUBJECT", "Trading Signal Scanner — Top 5 Picks")
 EMAIL_ENABLED: bool  = bool(SMTP_USER and SMTP_PASSWORD and EMAIL_TO)
 
-# ── SMS (Twilio) ──────────────────────────────────────────────────────────────
-TWILIO_ACCOUNT_SID:  str  = _get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN:   str  = _get("TWILIO_AUTH_TOKEN", "")
-TWILIO_FROM_NUMBER:  str  = _get("TWILIO_FROM_NUMBER", "")
-SMS_TO_NUMBERS:      list = _list("SMS_TO_NUMBERS")
-SMS_ENABLED: bool = bool(
-    TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER and SMS_TO_NUMBERS
-)
+# SMS removed — use email notifications
 
 # ── Output / Logging ──────────────────────────────────────────────────────────
 LOG_LEVEL: str    = _get("LOG_LEVEL", "INFO").upper()
@@ -71,10 +64,31 @@ SAVE_CSV: bool    = _bool("SAVE_CSV", True)
 SAVE_JSON: bool   = _bool("SAVE_JSON", False)
 
 # ── Scan defaults ─────────────────────────────────────────────────────────────
-DEFAULT_UNIVERSE: str = _get("DEFAULT_UNIVERSE", "sp500")
+DEFAULT_UNIVERSE: str = _get("DEFAULT_UNIVERSE", "major_us_markets")
 MAX_TICKERS: int      = _int("MAX_TICKERS", 500)
 FMP_BATCH_SIZE: int   = _int("FMP_BATCH_SIZE", 5)
-REQUEST_DELAY_MS: int = _int("REQUEST_DELAY_MS", 120)
+REQUEST_DELAY_MS:    int  = _int("REQUEST_DELAY_MS", 120)
+ASYNC_FETCH_WORKERS: int  = _int("ASYNC_FETCH_WORKERS", 40)   # concurrent threads for bar fetch (ENH-06)
 TOP_N_PICKS: int      = _int("TOP_N_PICKS", 5)
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── Alpaca Paper Trading ──────────────────────────────────────────────────────
+ALPACA_API_KEY:    str  = _get("ALPACA_API_KEY", "")
+ALPACA_SECRET_KEY: str  = _get("ALPACA_SECRET_KEY", "")
+ALPACA_PAPER:      bool = _bool("ALPACA_PAPER", True)   # default True = paper only
+ALPACA_ENABLED:    bool = bool(ALPACA_API_KEY and ALPACA_SECRET_KEY)
+
+# ── Trade execution settings ──────────────────────────────────────────────────
+TRADE_ENABLED:           bool  = _bool("TRADE_ENABLED", False)   # master switch
+TRADE_MIN_CONVICTION:    float = float(_get("TRADE_MIN_CONVICTION", "70.0"))
+TRADE_MIN_SCORE:         int   = _int("TRADE_MIN_SCORE", 4)
+TRADE_MAX_POSITIONS:     int   = _int("TRADE_MAX_POSITIONS", 10)
+TRADE_POSITION_SIZE_PCT: float = float(_get("TRADE_POSITION_SIZE_PCT", "5.0"))
+TRADE_MAX_POSITION_USD:  float = float(_get("TRADE_MAX_POSITION_USD", "2000.0"))
+TRADE_STOP_LOSS_PCT:     float = float(_get("TRADE_STOP_LOSS_PCT", "2.0"))
+TRADE_TAKE_PROFIT_PCT:   float = float(_get("TRADE_TAKE_PROFIT_PCT", "4.0"))
+TRADE_ORDER_TYPE:        str   = _get("TRADE_ORDER_TYPE", "limit").lower()
+TRADE_LIMIT_OFFSET_PCT:  float = float(_get("TRADE_LIMIT_OFFSET_PCT", "0.05"))
+TRADE_DIRECTION:         str   = _get("TRADE_DIRECTION", "both").lower()
+TRADE_WATCHLIST_ONLY:    bool  = _bool("TRADE_WATCHLIST_ONLY", True)   # True = only trade backtest-validated tickers
