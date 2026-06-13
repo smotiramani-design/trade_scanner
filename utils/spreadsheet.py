@@ -187,25 +187,31 @@ def _sheet_all_results(wb, results: List[TickerAnalysis], universe: str, ts: str
     ws = wb.create_sheet("All Results")
     ws.sheet_view.showGridLines = False
 
-    ws.merge_cells("A1:N1")
+    cols = ["Ticker", "Company", "Sector", "Price", "Chg %", "Net Score", "Bull", "Bear",
+            "Verdict", "Bars", "Mode",
+            "MTF Aligned", "MTF Detail", "Earnings Soon", "ATR Stop",
+            "Γ Strike", "Γ Value", "Γ OI", "Γ Pin", "Γ Squeeze", "Size Mult", "Γ Detail",
+            ] + SIG_NAMES
+
+    last_col = get_column_letter(len(cols))
+    ws.merge_cells(f"A1:{last_col}1")
     t = ws["A1"]
     t.value     = f"All Scanned Tickers — {universe.upper()} — {ts}  ({len(results)} tickers)"
     t.font      = Font(name="Calibri", bold=True, size=12, color=HEADER_FG)
     t.fill      = _fill(HEADER_BG)
     t.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 22
-
-    cols = ["Ticker", "Company", "Price", "Chg %", "Net Score", "Bull", "Bear",
-            "Verdict", "Bars", "Mode"] + SIG_NAMES
     _write_header_row(ws, 2, cols)
     ws.row_dimensions[2].height = 28
     ws.freeze_panes = "A3"
 
     for i, ta in enumerate(results, 3):
+        gd = getattr(ta, "gamma_data", None)
         row_vals = [
             ta.ticker,
             ta.company_name,
-            round(ta.price, 2) if ta.price else None,
+            getattr(ta, "sector", ""),
+            round(ta.price, 2)   if ta.price   else None,
             round(ta.chg_pct, 2) if ta.chg_pct else None,
             ta.net_score,
             ta.bull_count,
@@ -213,6 +219,17 @@ def _sheet_all_results(wb, results: List[TickerAnalysis], universe: str, ts: str
             ta.verdict,
             ta.bars,
             ta.mode,
+            "Yes" if getattr(ta, "mtf_aligned",  True)  else "No",
+            getattr(ta, "mtf_detail",  ""),
+            "Yes" if getattr(ta, "earnings_soon", False) else "",
+            round(ta.atr_stop, 2) if getattr(ta, "atr_stop", None) else None,
+            round(gd.nearest_strike, 2)    if gd and gd.nearest_strike  else None,
+            round(gd.nearest_gamma, 4)     if gd and gd.nearest_gamma   else None,
+            gd.nearest_oi                  if gd and gd.nearest_oi      else None,
+            "YES"                          if gd and gd.pin_risk         else "",
+            "YES"                          if gd and gd.squeeze_setup    else "",
+            round(gd.size_multiplier, 2)   if gd                         else 1.0,
+            gd.detail                      if gd                         else "",
         ] + [s.bias.value for s in ta.signals]
 
         for c_idx, val in enumerate(row_vals, 1):

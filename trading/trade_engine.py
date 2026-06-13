@@ -125,15 +125,23 @@ def _calc_entry_stop_tp(
     return entry, stop, tp
 
 
-def _calc_qty(entry_price: float, account_value: float) -> int:
+def _calc_qty(
+    entry_price:   float,
+    account_value: float,
+    gamma_mult:    float = 1.0,   # ENH-20: Greeks-aware size multiplier (0.75–1.25)
+) -> int:
     """
     Calculate whole-share quantity — no fractional shares.
-    Floors to nearest integer. Returns 0 if stock price exceeds budget.
+    gamma_mult scales position size based on gamma pin/squeeze analysis:
+      0.75 = near gamma pin (reduce size — price may stall)
+      1.00 = standard
+      1.25 = gamma squeeze setup (increase size — acceleration expected)
     """
     size_usd = min(
         account_value * config.TRADE_POSITION_SIZE_PCT / 100,
         config.TRADE_MAX_POSITION_USD,
     )
+    size_usd = round(size_usd * gamma_mult, 2)   # apply Greeks adjustment
     if entry_price <= 0:
         return 0
     return int(size_usd // entry_price)   # floor → whole shares only
@@ -230,7 +238,16 @@ def evaluate_and_trade(
             ))
             continue
 
-        qty      = _calc_qty(entry, account_value)
+        # ENH-20: extract gamma size multiplier if available
+        gamma_mult = 1.0
+        gd = getattr(ta, "gamma_data", None)
+        if gd and hasattr(gd, "size_multiplier"):
+            gamma_mult = gd.size_multiplier
+            if gamma_mult != 1.0:
+                log.info("Greeks sizing %s: multiplier=%.2f (%s)",
+                         ta.ticker, gamma_mult, gd.detail[:60])
+
+        qty      = _calc_qty(entry, account_value, gamma_mult)
         if qty == 0:
             decisions.append(TradeDecision(
                 ticker=ta.ticker, action="skip",

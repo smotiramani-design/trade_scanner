@@ -42,7 +42,7 @@ from trading import run_trade_session, get_client
 from trading.position_monitor import run_position_monitor
 from trading.pnl_tracker import get_performance_summary, format_summary_terminal
 from utils import setup_logging, save_results, build_spreadsheet, send_email
-from scanner import resolve_universe, scan
+from scanner import resolve_universe, scan, record_top_picks
 from signals.base import Bias, TickerAnalysis
 from signals.conviction import ConvictionScore, score_conviction, top_picks
 
@@ -243,6 +243,16 @@ def cli(universe, tickers, max_tickers, top_n, daily, hourly,
         ticker_list = resolve_universe(universe, mx)
         tag = universe
 
+    # ENH-15: Merge personal watchlist — always include regardless of universe
+    if config.PERSONAL_WATCHLIST:
+        personal = [t for t in config.PERSONAL_WATCHLIST if t not in ticker_list]
+        if personal:
+            ticker_list = personal + ticker_list   # personal tickers first
+            console.print(
+                f"[dim]Personal watchlist: added {len(personal)} ticker(s) "
+                f"({', '.join(personal)})[/]"
+            )
+
     if not ticker_list:
         console.print("[red]No tickers resolved.[/]")
         sys.exit(1)
@@ -305,6 +315,22 @@ def cli(universe, tickers, max_tickers, top_n, daily, hourly,
 
     # ── Conviction + top picks ────────────────────────────────────────────────
     bulls, bears = top_picks(results, n)
+
+    # ENH-17: build full conviction map for sector heatmap
+    from signals.conviction import score_conviction
+    conviction_map = {ta.ticker: score_conviction(ta) for ta in results}
+
+    # ── ENH-13: Record top picks as open positions for close monitoring ───────
+    try:
+        record_top_picks(bulls, bears)
+        open_count = len(bulls) + len(bears)
+        console.print(
+            f"[green]✓[/] Position tracker: {open_count} pick(s) recorded "
+            f"[dim](monitor with: python monitor.py --list)[/]"
+        )
+    except Exception as e:
+        log.warning("ENH-13: record_top_picks failed: %s", e)
+        console.print(f"[yellow]⚠[/] Position tracker unavailable: {e}")
 
     # ── Terminal display ──────────────────────────────────────────────────────
     console.print()
@@ -400,6 +426,7 @@ def cli(universe, tickers, max_tickers, top_n, daily, hourly,
             account_summary=account_summary,
             dry_run=(dry_run or not config.TRADE_ENABLED),
             scan_session=scan_session,
+            conviction_map=conviction_map,
         )
         if ok:
             console.print(f"[green]✓[/] Email sent to: {', '.join(config.EMAIL_TO)}")

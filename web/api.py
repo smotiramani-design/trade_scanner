@@ -64,6 +64,23 @@ _scan_cache: Optional[Dict] = None   # in-memory cache of last scan
 
 # ── Helper serialisers ────────────────────────────────────────────────────────
 
+def _serialise_gamma(gd) -> dict | None:
+    """Serialise GammaData to JSON-safe dict. Returns None if no data."""
+    if not gd or not gd.nearest_strike:
+        return None
+    return {
+        "nearest_strike":   gd.nearest_strike,
+        "nearest_gamma":    gd.nearest_gamma,
+        "nearest_oi":       gd.nearest_oi,
+        "max_gamma_strike": gd.max_gamma_strike,
+        "max_gamma_value":  gd.max_gamma_value,
+        "pin_risk":         gd.pin_risk,
+        "squeeze_setup":    gd.squeeze_setup,
+        "size_multiplier":  gd.size_multiplier,
+        "detail":           gd.detail,
+    }
+
+
 def _serialise_ta(ta) -> Dict:
     """Convert TickerAnalysis to JSON-safe dict."""
     sigs = [
@@ -102,6 +119,7 @@ def _serialise_ta(ta) -> Dict:
         "mtf_aligned":   getattr(ta, "mtf_aligned",   True),
         "mtf_detail":    getattr(ta, "mtf_detail",    ""),
         "earnings_soon": getattr(ta, "earnings_soon", False),
+        "gamma":         _serialise_gamma(getattr(ta, "gamma_data", None)),
     }
 
 

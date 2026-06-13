@@ -19,6 +19,7 @@ from typing import List, Optional, Tuple
 
 import config
 from signals.base import TickerAnalysis
+from utils.sector_heatmap import build_heatmap_html
 from signals.conviction import ConvictionScore
 from signals.fibonacci import FibLevels
 
@@ -70,6 +71,27 @@ def _signal_chips(ta: TickerAnalysis) -> str:
 
 
 # ── Fibonacci HTML section ────────────────────────────────────────────────────
+
+def _greeks_badge(ta) -> str:
+    """Render a compact Greeks/gamma badge for the pick card. Empty string if no data."""
+    gd = getattr(ta, "gamma_data", None)
+    if not gd or not gd.nearest_strike:
+        return ""
+    if gd.pin_risk:
+        bg, color, icon = "#FFF3CD", "#856404", "⚡ Gamma Pin"
+        note = f"${gd.nearest_strike:.2f} strike — size reduced to 75%"
+    elif gd.squeeze_setup:
+        bg, color, icon = "#E8F5E9", "#1D6F42", "🚀 Gamma Squeeze"
+        note = f"Breaking ${gd.nearest_strike:.2f} strike — size increased to 125%"
+    else:
+        bg, color, icon = "#F0F4FF", "#2E75B6", "Γ Options"
+        note = gd.detail[:70] if gd.detail else f"Nearest: ${gd.nearest_strike:.2f}"
+    return f'''<div style="margin-top:8px;font-size:12px;color:{color};background:{bg};
+  padding:6px 10px;border-radius:4px;border-left:3px solid {color}">
+  <strong>{icon}</strong> &nbsp; {note}
+  {f'&nbsp;·&nbsp; γ={gd.nearest_gamma:.4f} OI={gd.nearest_oi:,}' if gd.nearest_gamma else ''}
+</div>'''
+
 
 def _fib_table(fib: FibLevels, direction: str) -> str:
     """Render a compact entry/stop/target table for one pick card."""
@@ -175,7 +197,8 @@ def _pick_card(rank: int, ta: TickerAnalysis, cs: ConvictionScore, direction: st
     chg_c   = "#1D9E75" if (ta.chg_pct or 0) >= 0 else "#D85A30"
     chg_s   = f"{ta.chg_pct:+.2f}%" if ta.chg_pct else "—"
     price_s = f"${ta.price:.2f}" if ta.price else "—"
-    fib_html = _fib_table(ta.fib, direction) if ta.fib else ""
+    fib_html     = _fib_table(ta.fib, direction) if ta.fib else ""
+    greeks_badge = _greeks_badge(ta) if getattr(ta, "gamma_data", None) else ""
 
     return f"""
 <div style="background:{bg};border-left:4px solid {accent};border-radius:6px;
@@ -197,7 +220,7 @@ def _pick_card(rank: int, ta: TickerAnalysis, cs: ConvictionScore, direction: st
       <td align="right">
         {_grade_badge(cs.grade)}
         &nbsp;
-        <span style="font-size:12px;color:#666">Score: <strong style="color:{accent}">{ta.net_score:+d}/7</strong></span>
+        <span style="font-size:12px;color:#666">Score: <strong style="color:{accent}">{ta.net_score:+d}/{len(SIG_NAMES)}</strong></span>
       </td>
     </tr>
   </table>
@@ -220,6 +243,7 @@ def _pick_card(rank: int, ta: TickerAnalysis, cs: ConvictionScore, direction: st
    f'padding:6px 10px;border-radius:4px">⚠ Conflicting signals: {", ".join(cs.conflicting)}</div>'}
 
   {fib_html}
+  {greeks_badge}
 </div>"""
 
 
@@ -234,7 +258,7 @@ def _section_table(results: List[TickerAnalysis], title: str, limit: int = 30) -
         chg_c    = "#1D9E75" if (ta.chg_pct or 0) >= 0 else "#D85A30"
         price_s  = f"${ta.price:.2f}" if ta.price else "—"
         chg_s    = f"{ta.chg_pct:+.2f}%" if ta.chg_pct is not None else "—"
-        score_s  = f"{ta.net_score:+d}"
+        score_s  = f"{ta.net_score:+d}/{len(SIG_NAMES)}"
 
         # Fib next target
         fib_target = ""
@@ -403,6 +427,7 @@ def build_html(
     account_summary: dict = None,
     dry_run: bool = True,
     scan_session: str = "",   # "premarket" | "afterhours" | "open" | "closed"
+    conviction_map: dict = None,  # {ticker: ConvictionScore} for sector heatmap
 ) -> str:
     ts          = datetime.now().strftime("%A, %B %d, %Y  %H:%M ET")
     is_intraday = all_results and all_results[0].mode == "Hourly"
@@ -424,6 +449,7 @@ def build_html(
     bull_cards     = "".join(_pick_card(i + 1, ta, cs, "bullish") for i, (ta, cs) in enumerate(bulls))
     bear_cards     = "".join(_pick_card(i + 1, ta, cs, "bearish") for i, (ta, cs) in enumerate(bears))
     summary_table  = _section_table(all_results, f"Full Scan Results — {universe.upper()} ({len(all_results)} tickers)")
+    heatmap_html   = build_heatmap_html(all_results, conviction_map)
 
     stat_items = [
         ("Scanned",          len(all_results),                                          "#1F3864"),
@@ -478,6 +504,8 @@ def build_html(
 
     {summary_table}
 
+    {heatmap_html}
+
   </div>
 
   <div style="background:#F4F4F4;padding:16px 32px;font-size:11px;color:#888;
@@ -502,14 +530,15 @@ def send_email(
     bear_decisions:  list = None,
     account_summary: dict = None,
     dry_run:         bool = True,
-    scan_session:    str  = "",   # "premarket" | "afterhours" | "open" | "closed"
+    scan_session:    str  = "",
+    conviction_map:  dict = None,  # {ticker: ConvictionScore} for heatmap
 ) -> bool:
     if not config.EMAIL_ENABLED:
         log.warning("Email not configured — check SMTP_USER, SMTP_PASSWORD, EMAIL_TO in .env")
         return False
 
     try:
-        html_body = build_html(bulls, bears, all_results, universe, bull_decisions, bear_decisions, account_summary, dry_run, scan_session)
+        html_body = build_html(bulls, bears, all_results, universe, bull_decisions, bear_decisions, account_summary, dry_run, scan_session, conviction_map)
 
         msg = MIMEMultipart("mixed")
         # Session-aware subject prefix

@@ -82,7 +82,7 @@ def _commentary(ta: TickerAnalysis, ws: float, direction: str,
     price_str = f"${ta.price:.2f}" if ta.price else "N/A"
     chg_str   = f"{ta.chg_pct:+.2f}%" if ta.chg_pct else "flat"
     mode_str  = "intraday (hourly)" if ta.mode == "Hourly" else "daily"
-    score_str = f"{ta.net_score:+d}/7"
+    score_str = f"{ta.net_score:+d}/{len(ta.signals)}"
 
     # Opening line — price action summary
     if direction == "bullish":
@@ -183,10 +183,8 @@ def score_conviction(ta: TickerAnalysis) -> ConvictionScore:
     from signals.multi_timeframe import mtf_conviction_multiplier
     mtf_mult = mtf_conviction_multiplier(getattr(ta, "mtf_aligned", True))
     if mtf_mult < 1.0:
-        conviction_pct = round(conviction_pct * mtf_mult, 1)
-        grade_order = ["A+", "A", "B", "C", "D"]
-        if grade in grade_order and grade_order.index(grade) < len(grade_order) - 1:
-            grade = grade_order[grade_order.index(grade) + 1]
+        pct   = round(pct * mtf_mult, 1)
+        grade = _grade(pct, direction)   # recompute grade at reduced conviction
 
     # ENH-11: Earnings warning
     if getattr(ta, "earnings_soon", False):

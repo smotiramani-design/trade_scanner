@@ -9,7 +9,7 @@ Price source by session:
   Final fallback → last OHLCV bar close
 """
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import config
 from data.fmp_client import (
@@ -251,7 +251,6 @@ def scan(
         results.append(ta)
 
     results.sort(key=lambda r: r.net_score, reverse=True)
-
     # ── Greeks post-scan pass (ENH-20) — runs after loop, only for result set ──
     if results and config.GREEKS_ENABLED:
         log.info("Fetching option Greeks for %d tickers…", len(results))
@@ -273,57 +272,3 @@ def scan(
     log.info("Scan complete: %d/%d tickers analyzed [%s]",
              len(results), total, session_label)
     return results
-
-
-def record_top_picks(
-    top_bulls: List[Tuple],
-    top_bears: List[Tuple],
-) -> None:
-    """
-    ENH-13: Record top bullish and bearish picks as open positions for
-    close monitoring. Called by main.py after top picks are selected.
-    Skips any ticker that already has an open position (no duplicates).
-    Skips gracefully if fib levels are missing.
-    """
-    from utils.position_monitor import add_position
-
-    for ta, cs in top_bulls:
-        if not ta.fib or not ta.price:
-            log.debug("ENH-13: skipping %s — no fib levels", ta.ticker)
-            continue
-        try:
-            add_position(
-                ticker    = ta.ticker,
-                direction = "bullish",
-                entry     = ta.fib.entry,
-                stop      = ta.fib.stop,
-                t1        = ta.fib.t1,
-                t2        = ta.fib.t2,
-                t3        = ta.fib.t3,
-                score     = ta.net_score,
-                grade     = cs.grade,
-            )
-        except Exception as e:
-            log.debug("ENH-13: add_position failed %s: %s", ta.ticker, e)
-
-    for ta, cs in top_bears:
-        if not ta.fib or not ta.price:
-            log.debug("ENH-13: skipping %s — no fib levels", ta.ticker)
-            continue
-        try:
-            add_position(
-                ticker    = ta.ticker,
-                direction = "bearish",
-                entry     = ta.fib.entry,
-                stop      = ta.fib.stop,
-                t1        = ta.fib.t1,
-                t2        = ta.fib.t2,
-                t3        = ta.fib.t3,
-                score     = ta.net_score,
-                grade     = cs.grade,
-            )
-        except Exception as e:
-            log.debug("ENH-13: add_position failed %s: %s", ta.ticker, e)
-
-    log.info("ENH-13: recorded %d bull + %d bear picks as open positions",
-             len(top_bulls), len(top_bears))

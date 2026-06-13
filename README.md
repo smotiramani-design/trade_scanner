@@ -173,6 +173,16 @@ python -m backtest.engine --tickers AAPL NFLX QCOM --stop 2.0 --tp 6.0 --no-fib 
 # Auto-tune weights from backtest CSV output
 python -m backtest.weight_tuner output/backtest_*.csv
 python -m backtest.weight_tuner output/backtest_*.csv --apply   # writes to conviction.py
+
+# Terminal 1 — scanner runs hourly as normal
+python main.py --universe nasdaq100
+
+# Terminal 2 — monitor runs between scans
+python monitor.py                    # 5-min checks, market hours only
+python monitor.py --interval 120     # 2-min checks
+python monitor.py --list             # see open positions anytime
+python monitor.py --close CRWD      # manually close a position
+python monitor.py --once --force     # single check, ignore market hours (for testing)
 ```
 
 ---

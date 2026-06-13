@@ -43,6 +43,8 @@ class TickerAnalysis:
     mtf_aligned:  bool               = field(default=True,  repr=False)  # ENH-16 MTF flag
     mtf_detail:   str                = field(default="",    repr=False)  # ENH-16 MTF detail
     earnings_soon:bool               = field(default=False, repr=False)  # ENH-11 earnings flag
+    sector:        str               = field(default="",    repr=False)  # ENH-17 GICS sector
+    gamma_data:    Optional[object]   = field(default=None, repr=False)  # ENH-20 Greeks/gamma
 
     @property
     def bull_count(self) -> int:

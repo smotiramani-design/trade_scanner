@@ -63,6 +63,13 @@ OUTPUT_DIR: Path  = _ROOT / _get("OUTPUT_DIR", "output")
 SAVE_CSV: bool    = _bool("SAVE_CSV", True)
 SAVE_JSON: bool   = _bool("SAVE_JSON", False)
 
+# ── Personal watchlist (ENH-15) ───────────────────────────────────────────────
+# Comma-separated tickers always included in every scan, regardless of universe.
+# Example: PERSONAL_WATCHLIST=AAPL,TSLA,NVDA,MSFT
+# These are merged into ticker_list at the start of main.py.
+_pw_raw = _get("PERSONAL_WATCHLIST", "")
+PERSONAL_WATCHLIST: list = [t.strip().upper() for t in _pw_raw.split(",") if t.strip()] if _pw_raw else []
+
 # ── Scan defaults ─────────────────────────────────────────────────────────────
 DEFAULT_UNIVERSE: str = _get("DEFAULT_UNIVERSE", "major_us_markets")
 MAX_TICKERS: int      = _int("MAX_TICKERS", 500)
@@ -92,3 +99,4 @@ TRADE_ORDER_TYPE:        str   = _get("TRADE_ORDER_TYPE", "limit").lower()
 TRADE_LIMIT_OFFSET_PCT:  float = float(_get("TRADE_LIMIT_OFFSET_PCT", "0.05"))
 TRADE_DIRECTION:         str   = _get("TRADE_DIRECTION", "both").lower()
 TRADE_WATCHLIST_ONLY:    bool  = _bool("TRADE_WATCHLIST_ONLY", True)   # True = only trade backtest-validated tickers
+GREEKS_ENABLED:          bool  = _bool("GREEKS_ENABLED", False)         # ENH-20: fetch option chain for gamma sizing   # True = only trade backtest-validated tickers

@@ -1,0 +1,267 @@
+name: Trading Signal Scanner
+
+# ── Schedule overview ─────────────────────────────────────────────────────────
+#
+# GitHub Actions cron uses UTC only. ET has two offsets:
+#   EDT (Mar–Nov): UTC-4   ← most of the year
+#   EST (Nov–Mar): UTC-5   ← winter months
+#
+# ENH-14 fix: each time slot has TWO crons — one for EDT and one for EST.
+# The market-hours guard (Step 1) reads TZ="America/New_York" and skips any
+# run that fires outside the intended window. Redundant crons exit in <5s.
+#
+# ─── Pre-market (ENH-07) ──────────────────────────────────────────────────────
+#   4:30 AM ET  = 08:30 UTC (EDT) / 09:30 UTC (EST)
+#   8:00 AM ET  = 12:00 UTC (EDT) / 13:00 UTC (EST)
+#
+# ─── Market hours ─────────────────────────────────────────────────────────────
+#   9:35 AM ET  = 13:35 UTC (EDT) / 14:35 UTC (EST)
+#  10:35 AM ET  = 14:35 UTC (EDT) / 15:35 UTC (EST)
+#  11:35 AM ET  = 15:35 UTC (EDT) / 16:35 UTC (EST)
+#  12:35 PM ET  = 16:35 UTC (EDT) / 17:35 UTC (EST)
+#   1:35 PM ET  = 17:35 UTC (EDT) / 18:35 UTC (EST)
+#   2:35 PM ET  = 18:35 UTC (EDT) / 19:35 UTC (EST)
+#   3:35 PM ET  = 19:35 UTC (EDT) / 20:35 UTC (EST)
+#
+# ─── After-hours (ENH-08) ─────────────────────────────────────────────────────
+#   4:05 PM ET  = 20:05 UTC (EDT) / 21:05 UTC (EST)
+#   6:00 PM ET  = 22:00 UTC (EDT) / 23:00 UTC (EST)
+
+on:
+  schedule:
+    # ── Pre-market — EDT and EST pairs ────────────────────────────────────────
+    - cron: "30 8  * * 1-5"   # 4:30 AM EDT
+    - cron: "30 9  * * 1-5"   # 4:30 AM EST  (ENH-14)
+    - cron: "0  12 * * 1-5"   # 8:00 AM EDT
+    - cron: "0  13 * * 1-5"   # 8:00 AM EST  (ENH-14)
+
+    # ── Market hours — EDT and EST pairs ──────────────────────────────────────
+    - cron: "35 13 * * 1-5"   #  9:35 AM EDT
+    - cron: "35 14 * * 1-5"   #  9:35 AM EST / 10:35 AM EDT  (ENH-14 + market hours)
+    - cron: "35 15 * * 1-5"   # 10:35 AM EST / 11:35 AM EDT
+    - cron: "35 16 * * 1-5"   # 11:35 AM EST / 12:35 PM EDT
+    - cron: "35 17 * * 1-5"   # 12:35 PM EST /  1:35 PM EDT
+    - cron: "35 18 * * 1-5"   #  1:35 PM EST /  2:35 PM EDT
+    - cron: "35 19 * * 1-5"   #  2:35 PM EST /  3:35 PM EDT
+    - cron: "35 20 * * 1-5"   #  3:35 PM EST  (ENH-14)
+
+    # ── After-hours — EDT and EST pairs ───────────────────────────────────────
+    - cron: "5  20 * * 1-5"   # 4:05 PM EDT
+    - cron: "5  21 * * 1-5"   # 4:05 PM EST  (ENH-14)
+    - cron: "0  22 * * 1-5"   # 6:00 PM EDT
+    - cron: "0  23 * * 1-5"   # 6:00 PM EST  (ENH-14)
+
+  # ── Manual trigger ──────────────────────────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: "Universe to scan"
+        required: false
+        default: "watchlist"
+        type: choice
+        options:
+          - watchlist
+          - watchlist_t1
+          - watchlist_t2
+          - nasdaq100
+          - sp500
+          - dowjones
+          - nyse_american
+          - major_us_markets
+      max_tickers:
+        description: "Max tickers (0 = all)"
+        required: false
+        default: "0"
+      top_n:
+        description: "Top N picks in email"
+        required: false
+        default: "5"
+      skip_email:
+        description: "Skip email"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+# ── Prevent overlapping runs ──────────────────────────────────────────────────
+concurrency:
+  group: trading-scanner
+  cancel-in-progress: false   # let current run finish before queuing next
+
+# ── Jobs ──────────────────────────────────────────────────────────────────────
+jobs:
+  scan:
+    name: "Signal Scan"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Detect market session ─────────────────────────────────────────────
+      # Reads TZ=America/New_York — auto-handles EDT/EST transition.
+      # Sets: session (premarket/open/afterhours/closed), in_session (bool)
+      - name: Detect market session
+        id: session_check
+        run: |
+          ET_HOUR=$(TZ="America/New_York" date +%-H)
+          ET_MIN=$(TZ="America/New_York" date +%-M)
+          ET_DOW=$(TZ="America/New_York" date +%u)   # 1=Mon … 7=Sun
+          ET_MINS=$(( ET_HOUR * 60 + ET_MIN ))
+          ET_TIME=$(TZ="America/New_York" date '+%Y-%m-%d %H:%M %Z')
+          echo "ET time: $ET_TIME  |  DOW: $ET_DOW"
+
+          # Reject weekends
+          if [ "$ET_DOW" -gt 5 ]; then
+            echo "session=closed"      >> $GITHUB_OUTPUT
+            echo "in_session=false"   >> $GITHUB_OUTPUT
+            echo "⏭ Weekend — skipping"
+            exit 0
+          fi
+
+          # Session windows (minutes since midnight ET)
+          PREMARKET_START=$(( 4 * 60 + 15 ))   # 4:15 AM  (buffer after open)
+          PREMARKET_END=$(( 9 * 60 + 25 ))      # 9:25 AM  (stop before open)
+          MARKET_START=$(( 9 * 60 + 30 ))        # 9:30 AM
+          MARKET_END=$(( 16 * 60 + 0 ))          # 4:00 PM
+          AH_START=$(( 16 * 60 + 0 ))            # 4:00 PM
+          AH_END=$(( 20 * 60 + 0 ))              # 8:00 PM
+
+          if [ $ET_MINS -ge $PREMARKET_START ] && [ $ET_MINS -lt $PREMARKET_END ]; then
+            echo "session=premarket"   >> $GITHUB_OUTPUT
+            echo "in_session=true"    >> $GITHUB_OUTPUT
+            echo "✅ Pre-market session"
+          elif [ $ET_MINS -ge $MARKET_START ] && [ $ET_MINS -lt $MARKET_END ]; then
+            echo "session=open"        >> $GITHUB_OUTPUT
+            echo "in_session=true"    >> $GITHUB_OUTPUT
+            echo "✅ Market hours session"
+          elif [ $ET_MINS -ge $AH_START ] && [ $ET_MINS -lt $AH_END ]; then
+            echo "session=afterhours"  >> $GITHUB_OUTPUT
+            echo "in_session=true"    >> $GITHUB_OUTPUT
+            echo "✅ After-hours session"
+          else:
+            echo "session=closed"      >> $GITHUB_OUTPUT
+            echo "in_session=false"   >> $GITHUB_OUTPUT
+            echo "⏭ Outside all trading sessions ($ET_TIME)"
+          fi
+
+      # ── 2. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        if: steps.session_check.outputs.in_session == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+
+      # ── 3. Python 3.11 ───────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        if: steps.session_check.outputs.in_session == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 4. Dependencies ───────────────────────────────────────────────────────
+      - name: Install dependencies
+        if: steps.session_check.outputs.in_session == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 5. Write .env from secrets ────────────────────────────────────────────
+      - name: Write .env from secrets
+        if: steps.session_check.outputs.in_session == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          SESSION="${{ steps.session_check.outputs.session || 'open' }}"
+          cat > .env << EOF
+          # Auto-generated by GitHub Actions — do not commit
+          FMP_API_KEY=${{ secrets.FMP_API_KEY }}
+
+          SMTP_HOST=${{ secrets.SMTP_HOST }}
+          SMTP_PORT=${{ secrets.SMTP_PORT }}
+          SMTP_USER=${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM=${{ secrets.EMAIL_FROM }}
+          EMAIL_FROM_NAME=Signal Scanner ($SESSION)
+          EMAIL_TO=${{ secrets.EMAIL_TO }}
+          EMAIL_SUBJECT=Trading Signal Scanner
+
+          ALPACA_API_KEY=${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY=${{ secrets.ALPACA_SECRET_KEY }}
+          ALPACA_PAPER=true
+          TRADE_ENABLED=${{ secrets.TRADE_ENABLED || 'false' }}
+          TRADE_WATCHLIST_ONLY=true
+          TRADE_MIN_CONVICTION=60
+          TRADE_MIN_SCORE=4
+          TRADE_MAX_POSITIONS=10
+          TRADE_POSITION_SIZE_PCT=5.0
+          TRADE_MAX_POSITION_USD=2000.0
+          TRADE_STOP_LOSS_PCT=1.5
+          TRADE_TAKE_PROFIT_PCT=4.5
+          TRADE_ORDER_TYPE=limit
+          TRADE_DIRECTION=both
+
+          LOG_LEVEL=INFO
+          OUTPUT_DIR=output
+          SAVE_CSV=true
+          DEFAULT_UNIVERSE=${{ github.event.inputs.universe || 'watchlist' }}
+          MAX_TICKERS=${{ github.event.inputs.max_tickers || '0' }}
+          TOP_N_PICKS=${{ github.event.inputs.top_n || '5' }}
+          FMP_BATCH_SIZE=5
+          ASYNC_FETCH_WORKERS=40
+          EOF
+          echo ".env written ✅ (session=$SESSION)"
+
+      # ── 6. Output directory ───────────────────────────────────────────────────
+      - name: Create output directory
+        if: steps.session_check.outputs.in_session == 'true' || github.event_name == 'workflow_dispatch'
+        run: mkdir -p output
+
+      # ── 7. Run scanner ────────────────────────────────────────────────────────
+      - name: Run scanner
+        if: steps.session_check.outputs.in_session == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          SESSION="${{ steps.session_check.outputs.session || 'open' }}"
+          UNIVERSE="${{ github.event.inputs.universe || 'watchlist' }}"
+          MAX="${{ github.event.inputs.max_tickers || '0' }}"
+          TOP="${{ github.event.inputs.top_n || '5' }}"
+          SKIP_EMAIL="${{ github.event.inputs.skip_email || 'false' }}"
+
+          # Session-specific universe defaults
+          # Pre-market: Tier 1 only (gap-and-go — highest confidence plays)
+          # After-hours: full watchlist (earnings reactions across all validated tickers)
+          # Market hours: full watchlist
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            if   [ "$SESSION" = "premarket" ];   then UNIVERSE="watchlist_t1"
+            elif [ "$SESSION" = "afterhours" ];  then UNIVERSE="watchlist"
+            else                                      UNIVERSE="watchlist"
+            fi
+          fi
+
+          # Build command
+          CMD="python main.py --universe $UNIVERSE --top $TOP"
+          [ "$MAX" != "0" ] && CMD="$CMD --max $MAX"
+          [ "$SKIP_EMAIL" = "true" ] && CMD="$CMD --no-email"
+
+          # Mode flags
+          if   [ "$SESSION" = "premarket" ];   then CMD="$CMD --daily"
+          elif [ "$SESSION" = "afterhours" ];  then CMD="$CMD --daily"
+          # market hours: auto-detects hourly mode from MarketSession
+          fi
+
+          echo "Session: $SESSION | Command: $CMD"
+          $CMD
+
+      # ── 8. Upload artifacts ───────────────────────────────────────────────────
+      - name: Upload scan results
+        if: (steps.session_check.outputs.in_session == 'true' || github.event_name == 'workflow_dispatch') && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-${{ steps.session_check.outputs.session || 'manual' }}-${{ github.run_number }}
+          path: |
+            output/*.xlsx
+            output/*.csv
+            output/*.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ── 9. Failure notification ───────────────────────────────────────────────
+      - name: Notify on failure
+        if: failure() && (steps.session_check.outputs.in_session == 'true' || github.event_name == 'workflow_dispatch')
+        run: |
+          echo "::error::Scanner failed at $(TZ='America/New_York' date '+%Y-%m-%d %H:%M ET') [session: ${{ steps.session_check.outputs.session }}]"

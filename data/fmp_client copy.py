@@ -56,26 +56,6 @@ class FMPError(Exception):
     pass
 
 
-# ── Ticker alias resolution (ENH-25) ─────────────────────────────────────────
-# Some tickers use dot-notation in their exchange symbol (BRK.B, BF.B) but FMP
-# requires dash-notation (BRK-B, BF-B). Normalise at the FMP client boundary
-# so every caller can use canonical dot-notation without worrying about it.
-
-_TICKER_ALIASES: Dict[str, str] = {
-    "BRK.A": "BRK-A",
-    "BRK.B": "BRK-B",
-    "BF.A":  "BF-A",
-    "BF.B":  "BF-B",
-    "LEN.B": "LEN-B",
-    "MOG.A": "MOG-A",
-    "MOG.B": "MOG-B",
-}
-
-def _normalize(ticker: str) -> str:
-    """Map dot-notation tickers to FMP dash-notation. Pass-through for all others."""
-    return _TICKER_ALIASES.get(ticker.upper(), ticker.upper())
-
-
 # ── Session detection ─────────────────────────────────────────────────────────
 
 class MarketSession(Enum):
@@ -200,13 +180,6 @@ def get_quotes_batched(tickers: List[str], batch_size: int = None) -> Dict[str, 
         if i + bs < len(tickers):
             time.sleep(0.2)
     return result
-
-
-# get_batch_quotes is an alias used by position_monitor.py (ENH-13)
-def get_batch_quotes(tickers: List[str]) -> Dict[str, Dict]:
-    """Alias for get_quotes_batched with default batch size. Used by position monitor."""
-    tickers = [_normalize(t) for t in tickers]
-    return get_quotes_batched(tickers)
 
 
 # ── Price extraction ──────────────────────────────────────────────────────────
@@ -379,7 +352,6 @@ def get_intraday_bars(
     Intraday OHLCV via /stable/historical-chart/{interval}?symbol=X
     Returns list of {date, open, high, low, close, volume}, newest first.
     """
-    ticker  = _normalize(ticker)
     to_dt   = datetime.now()
     from_dt = to_dt - timedelta(days=days)
     try:
@@ -406,6 +378,7 @@ def get_intraday_bars(
         return []
 
 
+
 # ── Earnings calendar (ENH-11) ────────────────────────────────────────────────
 
 def get_earnings_flags(
@@ -424,7 +397,6 @@ def get_earnings_flags(
     import datetime as dt_mod
     from datetime import timezone as tz
 
-    tickers = [_normalize(t) for t in tickers]
     result: Dict[str, bool] = {t: False for t in tickers}
     if not tickers:
         return result
@@ -454,6 +426,7 @@ def get_earnings_flags(
             for item in data:
                 sym = (item.get("symbol") or "").strip()
                 if sym in ticker_set:
+                    # Check if earnings date is within days_ahead business days
                     try:
                         earn_date = dt_mod.date.fromisoformat(
                             (item.get("date") or item.get("reportDate") or "")[:10]
@@ -491,7 +464,6 @@ def get_sector_map(tickers: List[str]) -> Dict[str, str]:
     FMP Ultimate's 3000 req/min budget handles 500+ tickers comfortably.
     """
     global _SECTOR_CACHE
-    tickers = [_normalize(t) for t in tickers]
     missing = [t for t in tickers if t not in _SECTOR_CACHE]
 
     for sym in missing:
@@ -525,34 +497,9 @@ def get_sector_map(tickers: List[str]) -> Dict[str, str]:
     return {t: _SECTOR_CACHE.get(t, "") for t in tickers}
 
 
-# ── Constituent list helpers ──────────────────────────────────────────────────
-
-def _fetch_constituent(path: str, label: str) -> List[str]:
-    """Fetch index constituent list. Silent fallback on plan restriction."""
-    try:
-        resp = _SESSION.get(
-            f"{BASE}/{path}",
-            params={"apikey": config.FMP_API_KEY},
-            timeout=15,
-        )
-        if resp.status_code in _PLAN_RESTRICTED:
-            log.debug("%s constituent: plan restriction — using built-in", label)
-            return []
-        resp.raise_for_status()
-        data    = resp.json()
-        tickers = [d["symbol"] for d in data if isinstance(d, dict) and "symbol" in d]
-        if tickers:
-            log.info("Live %s list: %d tickers", label, len(tickers))
-        return tickers
-    except Exception as e:
-        log.debug("%s constituent fetch failed (%s) — using built-in", label, e)
-        return []
-
-
 def get_sp500_constituents()     -> List[str]: return _fetch_constituent("sp500-constituent",    "S&P 500")
 def get_nasdaq100_constituents() -> List[str]: return _fetch_constituent("nasdaq-constituent",   "Nasdaq 100")
 def get_dowjones_constituents()  -> List[str]: return _fetch_constituent("dowjones-constituent", "Dow Jones")
-
 
 # ── Company name lookup ───────────────────────────────────────────────────────
 
@@ -572,8 +519,6 @@ def get_company_names(tickers: List[str]) -> Dict[str, str]:
       4. Empty string — if all sources fail, name is left blank (not an error).
     """
     global _NAME_CACHE
-
-    tickers = [_normalize(t) for t in tickers]
 
     # Seed cache from static table on first call
     if not _NAME_CACHE:
