@@ -147,3 +147,21 @@ ORDER BY s.run_ts DESC, p.direction, p.rank;
 CREATE OR REPLACE VIEW v_today_picks AS
 SELECT * FROM v_scan_picks
 WHERE trade_date = (now() AT TIME ZONE 'America/New_York')::date;
+
+-- ── Dashboard read access (Supabase publishable / anon key) ───────────────────
+-- Run in Supabase SQL Editor so the Vercel dashboard can read scan data.
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
+GRANT SELECT ON scans, picks, trades TO anon, authenticated;
+GRANT SELECT ON v_scan_picks, v_today_picks TO anon, authenticated;
+
+ALTER TABLE scans  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE picks  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trades ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "anon_read_scans"  ON scans;
+DROP POLICY IF EXISTS "anon_read_picks"  ON picks;
+DROP POLICY IF EXISTS "anon_read_trades" ON trades;
+CREATE POLICY "anon_read_scans"  ON scans  FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_read_picks"  ON picks  FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_read_trades" ON trades FOR SELECT TO anon USING (true);
