@@ -1,0 +1,124 @@
+/* globals.css — Trade Scanner Dashboard
+   Terminal trading desk aesthetic, ported from the original Vite app.
+   Dark #0D1117 base · IBM Plex Mono for data · Inter for labels */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  --bg:        #0D1117;
+  --bg2:       #161B22;
+  --bg3:       #21262D;
+  --border:    #30363D;
+  --text:      #E6EDF3;
+  --muted:     #7D8590;
+  --bull:      #3FB950;
+  --bull-dim:  #1A3A22;
+  --bear:      #F85149;
+  --bear-dim:  #3A1A1A;
+  --accent:    #58A6FF;
+  --gold:      #D29922;
+  --mono:      'IBM Plex Mono', monospace;
+  --sans:      'Inter', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; min-height: 100vh; }
+a { color: inherit; text-decoration: none; }
+
+/* ── Layout ─────────────────────────────────────────────── */
+.layout { display: flex; min-height: 100vh; }
+.sidebar { width: 220px; background: var(--bg2); border-right: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+.sidebar-logo { padding: 20px 16px 16px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 13px; font-weight: 500; letter-spacing: 0.04em; }
+.sidebar-logo span { color: var(--bull); }
+.sidebar-nav { padding: 8px 0; flex: 1; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 16px; cursor: pointer; color: var(--muted); font-size: 13px; transition: color .15s, background .15s; border-left: 2px solid transparent; }
+.nav-item:hover { color: var(--text); background: var(--bg3); }
+.nav-item.active { color: var(--accent); border-left-color: var(--accent); background: var(--bg3); }
+.sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+.main { flex: 1; overflow-y: auto; padding: 24px; max-width: 1400px; }
+
+/* ── Header bar ─────────────────────────────────────────── */
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+.page-title { font-size: 20px; font-weight: 600; }
+.page-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+/* ── Stat cards ──────────────────────────────────────────── */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.stat-value { font-family: var(--mono); font-size: 22px; font-weight: 500; margin-top: 4px; }
+.stat-value.bull { color: var(--bull); }
+.stat-value.bear { color: var(--bear); }
+.stat-value.accent { color: var(--accent); }
+.stat-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+/* ── Section / hour headers ──────────────────────────────── */
+.section-header { display: flex; align-items: center; justify-content: space-between; margin: 26px 0 12px; }
+.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.hour-pill { font-family: var(--mono); font-size: 13px; color: var(--accent); background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; }
+.trade-tag { font-family: var(--mono); font-size: 10px; color: var(--gold); border: 1px solid var(--gold); border-radius: 3px; padding: 1px 6px; margin-left: 8px; }
+
+/* ── Panels / charts ─────────────────────────────────────── */
+.panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+.panel-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 12px; }
+
+/* ── Ticker cards ────────────────────────────────────────── */
+.picks-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.pick-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; transition: border-color .2s; }
+.pick-card:hover { border-color: var(--accent); }
+.pick-card.bull-card { border-left: 3px solid var(--bull); }
+.pick-card.bear-card { border-left: 3px solid var(--bear); }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; padding: 12px 14px 8px; border-bottom: 1px solid var(--border); }
+.card-ticker { font-family: var(--mono); font-size: 18px; font-weight: 500; }
+.card-name { font-size: 11px; color: var(--muted); margin-top: 1px; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-price { font-family: var(--mono); font-size: 16px; text-align: right; }
+.card-chg { font-family: var(--mono); font-size: 12px; text-align: right; margin-top: 2px; }
+.card-chg.up { color: var(--bull); }
+.card-chg.down { color: var(--bear); }
+.card-body { padding: 10px 14px 12px; }
+.card-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+
+/* Conviction bar */
+.conviction-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.conviction-label { font-size: 11px; color: var(--muted); width: 64px; }
+.conviction-bar-bg { flex: 1; height: 5px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
+.conviction-fill { height: 100%; border-radius: 3px; }
+.conviction-fill.bull { background: var(--bull); }
+.conviction-fill.bear { background: var(--bear); }
+.conviction-pct { font-family: var(--mono); font-size: 12px; width: 42px; text-align: right; }
+
+/* Grade badge */
+.grade-badge { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 3px; border: 1px solid var(--gold); color: var(--gold); }
+
+/* Flags */
+.fib-row { display: flex; gap: 14px; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 8px; }
+.fib-item label { color: var(--muted); font-size: 10px; display: block; }
+.fib-item span { color: var(--text); }
+.earnings-flag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--gold); padding: 2px 8px; border-radius: 3px; border: 1px solid var(--gold); background: rgba(210,153,34,.12); margin-top: 8px; }
+.mtf-badge { font-size: 11px; color: var(--muted); }
+.mtf-badge.conflict { color: var(--bear); }
+
+/* ── Tables ──────────────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--border); }
+.data-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.data-table tr:hover td { background: var(--bg3); }
+.mono { font-family: var(--mono); }
+.up { color: var(--bull); }
+.down { color: var(--bear); }
+
+/* ── Day list ────────────────────────────────────────────── */
+.day-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.day-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; transition: border-color .2s; }
+.day-card:hover { border-color: var(--accent); }
+.day-date { font-family: var(--mono); font-size: 16px; font-weight: 500; }
+.day-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* ── Empty state / misc ──────────────────────────────────── */
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--muted); text-align: center; }
+.empty-state .icon { font-size: 40px; margin-bottom: 12px; opacity: .5; }
+.empty-state .hint { font-size: 12px; margin-top: 6px; }
+.back-link { font-size: 13px; color: var(--accent); margin-bottom: 16px; display: inline-block; }
+.error-box { background: var(--bear-dim); border: 1px solid var(--bear); border-radius: 8px; padding: 16px; color: var(--text); font-size: 13px; }
+.error-box code { font-family: var(--mono); color: var(--gold); }

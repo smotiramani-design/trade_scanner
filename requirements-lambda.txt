@@ -1,0 +1,27 @@
+# requirements-lambda.txt — dependencies bundled into the Lambda zip.
+#
+# This is the full requirements.txt MINUS the web dashboard stack
+# (fastapi, uvicorn) which the scheduled scanner/trader does not use,
+# PLUS the Postgres driver. Keeping the web stack out trims the package
+# well under Lambda's 250 MB unzipped limit.
+
+# ── Core data & computation ───────────────────────────────────────────────────
+python-dotenv>=1.0.0
+requests>=2.31.0
+pandas>=2.1.0
+numpy>=1.26.0
+yfinance>=0.2.36,<0.3          # pin to 0.2.x — 1.x changed the API; keep prior behavior
+pytz>=2024.1
+
+# ── CLI / reporting helpers (small, pure-Python; imported transitively) ───────
+rich>=13.7.0
+click>=8.1.7
+openpyxl>=3.1.2
+
+# ── Alpaca paper trading ──────────────────────────────────────────────────────
+alpaca-py>=0.30.0
+
+# ── Database (Supabase / Postgres) ────────────────────────────────────────────
+# psycopg[binary] ships its own libpq, so no system Postgres libs are needed
+# on the Lambda runtime.
+psycopg[binary]>=3.1.0

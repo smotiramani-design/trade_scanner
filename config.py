@@ -78,7 +78,12 @@ REQUEST_DELAY_MS:    int  = _int("REQUEST_DELAY_MS", 120)
 ASYNC_FETCH_WORKERS: int  = _int("ASYNC_FETCH_WORKERS", 40)   # concurrent threads for bar fetch (ENH-06)
 TOP_N_PICKS: int      = _int("TOP_N_PICKS", 5)
 
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # Read-only filesystem (e.g. AWS Lambda, where only /tmp is writable).
+    OUTPUT_DIR = Path("/tmp/output")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Alpaca Paper Trading ──────────────────────────────────────────────────────
 ALPACA_API_KEY:    str  = _get("ALPACA_API_KEY", "")
@@ -100,3 +105,11 @@ TRADE_LIMIT_OFFSET_PCT:  float = float(_get("TRADE_LIMIT_OFFSET_PCT", "0.05"))
 TRADE_DIRECTION:         str   = _get("TRADE_DIRECTION", "both").lower()
 TRADE_WATCHLIST_ONLY:    bool  = _bool("TRADE_WATCHLIST_ONLY", True)   # True = only trade backtest-validated tickers
 GREEKS_ENABLED:          bool  = _bool("GREEKS_ENABLED", False)         # ENH-20: fetch option chain for gamma sizing   # True = only trade backtest-validated tickers
+
+# ── Database (Supabase / Postgres) ────────────────────────────────────────────
+# Scan results + trades are written here instead of (or alongside) email.
+# DATABASE_URL is the Postgres connection string from Supabase
+#   (Project → Settings → Database → Connection string → URI).
+# Example: postgresql://postgres:[PASSWORD]@db.<ref>.supabase.co:5432/postgres
+DATABASE_URL: str  = _get("DATABASE_URL", "")
+DB_ENABLED:   bool = _bool("DB_ENABLED", bool(DATABASE_URL))   # auto-on when a URL is set
