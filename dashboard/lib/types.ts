@@ -63,3 +63,50 @@ export interface ScanGroup {
   bulls: PickRow[];
   bears: PickRow[];
 }
+
+// ── Pre-Market Momentum Screener ─────────────────────────────────────────────
+
+export interface MomentumPickRow {
+  trade_date: string;
+  et_time: string;
+  et_hour: number;
+  session: string | null;
+  universe: string | null;
+  run_ts: string;
+  scan_id: number;
+  ticker: string;
+  company: string | null;
+  sector: string | null;
+  tier: "TRADE" | "WATCH" | "SKIP" | string;
+  rank: number | null;
+  score: number | null;
+  conviction: number | null;
+  pm_change_pct: number | null;
+  pm_volume: number | null;
+  pm_price: number | null;
+  prev_close: number | null;
+  gap_pct: number | null;
+  l1_catalyst: string | null;
+  l2_volume: string | null;
+  l3_price: string | null;
+  l4_rs: string | null;
+  l5_options: string | null;
+  data_sources: string | null;
+}
+
+export interface MomentumDaySummary {
+  trade_date: string;
+  n_trade: number;
+  n_watch: number;
+  et_time: string;
+}
+
+export interface MomentumScanGroup {
+  scan_id: number;
+  et_time: string;
+  et_hour: number;
+  session: string | null;
+  universe: string | null;
+  trade: MomentumPickRow[];
+  watch: MomentumPickRow[];
+}
