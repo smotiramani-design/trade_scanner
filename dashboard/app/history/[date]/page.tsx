@@ -35,7 +35,9 @@ export default async function DayPage({ params }: { params: { date: string } }) 
           <p>No picks recorded for {date}.</p>
         </div>
       ) : (
-        groups.map((g) => <ScanSection key={g.scan_id} group={g} />)
+        groups.map((g, i) => (
+          <ScanSection key={g.scan_id} group={g} defaultExpanded={i === 0} />
+        ))
       )}
     </>
   );

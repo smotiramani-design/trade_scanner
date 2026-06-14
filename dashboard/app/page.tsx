@@ -90,8 +90,8 @@ export default async function TodayPage() {
             <ConvictionChart data={series} />
           </div>
 
-          {groups.map((g) => (
-            <ScanSection key={g.scan_id} group={g} />
+          {groups.map((g, i) => (
+            <ScanSection key={g.scan_id} group={g} defaultExpanded={i === 0} />
           ))}
         </>
       )}
