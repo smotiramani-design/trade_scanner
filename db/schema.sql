@@ -110,9 +110,11 @@ CREATE INDEX IF NOT EXISTS idx_trades_scan_id   ON trades (scan_id);
 CREATE INDEX IF NOT EXISTS idx_trades_day       ON trades (trade_date DESC);
 
 -- ── Flat browsing view: one row per pick, joined to its scan ──────────────────
--- This is the table to open in Supabase. Filter trade_date / et_hour, sort by
--- conviction to see the best stocks for any given day and hour.
-CREATE OR REPLACE VIEW v_scan_picks AS
+-- DROP + CREATE (not OR REPLACE) so new columns can be added mid-list on upgrades.
+DROP VIEW IF EXISTS v_today_picks;
+DROP VIEW IF EXISTS v_scan_picks;
+
+CREATE VIEW v_scan_picks AS
 SELECT
     s.trade_date,
     s.et_time,
@@ -144,7 +146,7 @@ JOIN scans s ON s.id = p.scan_id
 ORDER BY s.run_ts DESC, p.direction, p.rank;
 
 -- ── Convenience view: just today's picks (ET) ─────────────────────────────────
-CREATE OR REPLACE VIEW v_today_picks AS
+CREATE VIEW v_today_picks AS
 SELECT * FROM v_scan_picks
 WHERE trade_date = (now() AT TIME ZONE 'America/New_York')::date;
 

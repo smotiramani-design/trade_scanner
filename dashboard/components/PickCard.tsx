@@ -57,26 +57,42 @@ export default function PickCard({ pick }: { pick: PickRow }) {
                 <span>{pick.fib_label}</span>
               </div>
             )}
-            {pick.fib_hit != null && (
+            {pick.fib_target != null && (
               <div className="fib-item">
                 <label>1hr hit</label>
-                <span className={pick.fib_hit ? "up" : "down"}>
-                  {pick.fib_hit ? "Yes" : "No"}
+                <span className={pick.fib_hit === true ? "up" : pick.fib_hit === false ? "down" : undefined}
+                      style={pick.fib_hit == null ? { color: "var(--muted)" } : undefined}>
+                  {pick.fib_hit === true ? "Yes" : pick.fib_hit === false ? "No" : "Pending"}
                 </span>
               </div>
             )}
           </div>
         )}
 
-        {pick.fib_hit != null && (
-          <div className={`fib-hit-badge ${pick.fib_hit ? "hit" : "miss"}`}>
-            {pick.fib_hit ? "✓ Target hit" : "✗ Target missed"}
+        {pick.fib_target != null && (
+          pick.fib_hit === true ? (
+          <div className="fib-hit-badge hit">
+            ✓ Target hit
             {pick.fib_window_high != null && pick.fib_window_low != null && (
               <span className="fib-hit-range mono">
                 {" "}· hi {fmtPrice(pick.fib_window_high)} / lo {fmtPrice(pick.fib_window_low)}
               </span>
             )}
           </div>
+          ) : pick.fib_hit === false ? (
+          <div className="fib-hit-badge miss">
+            ✗ Target missed
+            {pick.fib_window_high != null && pick.fib_window_low != null && (
+              <span className="fib-hit-range mono">
+                {" "}· hi {fmtPrice(pick.fib_window_high)} / lo {fmtPrice(pick.fib_window_low)}
+              </span>
+            )}
+          </div>
+          ) : (
+          <div className="fib-hit-badge pending">
+            ◷ Hit check pending — runs at 4 PM ET
+          </div>
+          )
         )}
 
         {pick.earnings_soon && <div className="earnings-flag">⚠ Earnings &lt; 2 days</div>}
