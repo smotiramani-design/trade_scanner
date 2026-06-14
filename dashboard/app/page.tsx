@@ -60,7 +60,7 @@ export default async function TodayPage() {
         <div className="empty-state">
           <div className="icon">📭</div>
           <p>No picks recorded today yet.</p>
-          <p className="hint">The scanner writes here each hour from 9:35 AM to 3:35 PM ET.</p>
+          <p className="hint">The scanner writes here each hour from 10:00 AM to 3:00 PM ET.</p>
         </div>
       ) : (
         <>

@@ -2,7 +2,7 @@
 
 export interface PickRow {
   trade_date: string;        // "2026-06-13"
-  et_time: string;           // "09:35"
+  et_time: string;           // "10:00"
   et_hour: number;
   session: string | null;
   direction: "bull" | "bear";
@@ -16,6 +16,9 @@ export interface PickRow {
   chg_pct: number | null;
   fib_target: number | null;
   fib_label: string | null;
+  fib_hit: boolean | null;
+  fib_window_high: number | null;
+  fib_window_low: number | null;
   mtf_aligned: boolean | null;
   earnings_soon: boolean | null;
   verdict: string | null;

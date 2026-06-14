@@ -57,6 +57,25 @@ export default function PickCard({ pick }: { pick: PickRow }) {
                 <span>{pick.fib_label}</span>
               </div>
             )}
+            {pick.fib_hit != null && (
+              <div className="fib-item">
+                <label>1hr hit</label>
+                <span className={pick.fib_hit ? "up" : "down"}>
+                  {pick.fib_hit ? "Yes" : "No"}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {pick.fib_hit != null && (
+          <div className={`fib-hit-badge ${pick.fib_hit ? "hit" : "miss"}`}>
+            {pick.fib_hit ? "✓ Target hit" : "✗ Target missed"}
+            {pick.fib_window_high != null && pick.fib_window_low != null && (
+              <span className="fib-hit-range mono">
+                {" "}· hi {fmtPrice(pick.fib_window_high)} / lo {fmtPrice(pick.fib_window_low)}
+              </span>
+            )}
           </div>
         )}
 

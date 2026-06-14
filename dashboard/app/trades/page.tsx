@@ -27,7 +27,7 @@ export default async function TradesPage() {
       <div className="topbar">
         <div>
           <div className="page-title">Trades</div>
-          <div className="page-sub">Decisions from the 9:35 / 11:35 / 2:35 ET windows</div>
+          <div className="page-sub">Decisions from the 10 AM, 12 PM, and 2 PM ET trade runs</div>
         </div>
       </div>
 

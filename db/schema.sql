@@ -9,8 +9,12 @@
 --
 --   scans  — one row per scanner run
 --   picks  — the top bullish/bearish conviction picks for each scan
---   trades — trade decisions made during the 9:35 / 11:35 / 2:35 windows
+--   trades — trade decisions at the 10 AM / 12 PM / 2 PM scan runs
 --
+-- Schedule (ET, Mon–Fri, top of hour):
+--   10:00–15:00  hourly scan
+--   10:00, 12:00, 14:00  scan + trade
+--   16:00  Fib target hit validation (fib_hit on picks)
 -- Eastern-time columns make browsing intuitive (run_ts itself is stored in UTC):
 --   trade_date  the ET calendar day      (e.g. 2026-06-13)   ← filter by day
 --   et_time     the ET wall-clock HH:MM   (e.g. 09:35)        ← see the hour
@@ -55,6 +59,10 @@ CREATE TABLE IF NOT EXISTS picks (
     conflicting    JSONB,       -- ["stochastics vs candle", ...]
     fib_target     NUMERIC,     -- next-hour Fibonacci target
     fib_label      TEXT,
+    fib_hit        BOOLEAN,     -- set at 4 PM: did price hit target within 1 hr?
+    fib_window_high NUMERIC,    -- high in the validation window
+    fib_window_low  NUMERIC,    -- low in the validation window
+    fib_validated_at TIMESTAMPTZ,
     mtf_aligned    BOOLEAN,     -- multi-timeframe confirmation
     earnings_soon  BOOLEAN,     -- earnings within 2 days
     atr_stop       NUMERIC,
@@ -86,6 +94,10 @@ ALTER TABLE scans  ADD COLUMN IF NOT EXISTS et_time    TEXT;
 ALTER TABLE scans  ADD COLUMN IF NOT EXISTS et_hour    INT;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS trade_date DATE;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS et_time    TEXT;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_hit           BOOLEAN;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_window_high   NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_window_low    NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_validated_at  TIMESTAMPTZ;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_date DATE;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS et_time    TEXT;
 
@@ -117,6 +129,9 @@ SELECT
     p.chg_pct,
     p.fib_target,
     p.fib_label,
+    p.fib_hit,
+    p.fib_window_high,
+    p.fib_window_low,
     p.mtf_aligned,
     p.earnings_soon,
     p.verdict,

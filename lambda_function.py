@@ -1,27 +1,23 @@
 """
 lambda_function.py — AWS Lambda entry point for the Trading Signal Scanner.
 
-One Lambda, scheduled hourly by EventBridge at :35 past the hour, 9:35 AM–3:35 PM
-ET, Mon–Fri. Whether it ALSO executes trades is decided here in Python based on
-the Eastern-time clock — no second schedule needed.
+Schedule (America/New_York, Mon–Fri) — one EventBridge rule at the top of each hour:
+  cron(0 10-16 ? * MON-FRI *)
 
-Trade windows (ET):  9:35 AM, 11:35 AM, 2:35 PM  → trading enabled
-All other hours                                  → scan only (write to DB)
+  10 AM, 11 AM, 12 PM, 1 PM, 2 PM, 3 PM  →  scan (+ trade at 10 AM, 12 PM, 2 PM)
+  4 PM  →  Fib target hit validation only (no scan, no trades)
 
-EventBridge Scheduler should be created with timezone "America/New_York" and a
-cron of:  cron(35 9-15 ? * MON-FRI *)   (DST handled automatically by AWS).
+Optional `event` overrides (manual test invokes):
+    {"force": true}      bypass holiday / schedule skip
+    {"mode": "scan"}     force scan path
+    {"mode": "trade"}    force trade path (scan + trade)
+    {"mode": "fib"}      force end-of-day fib validation
+    {"trade": true/false} override trade decision on scan/trade runs
+    {"universe": "..."}  override scan universe
+    {"top_n": 5}
+    {"dry_run": true}
 
-Optional `event` overrides (handy for manual test invokes from the console):
-    {"trade": true}      force trading on/off, ignoring the clock
-    {"force": true}      bypass the holiday / market-hours skip guard
-    {"universe": "..."}  override the scan universe (default: config.DEFAULT_UNIVERSE)
-    {"top_n": 5}         override number of top picks
-    {"dry_run": true}    evaluate trades but don't submit orders
-
-Config/secrets:
-    Set the env var SECRET_NAME to an AWS Secrets Manager secret (a JSON of
-    key/value pairs) and it is loaded into the environment at cold start, before
-    `config` reads it. Real Lambda env vars take precedence over secret values.
+Config/secrets: set SECRET_NAME to a Secrets Manager JSON secret (loaded at cold start).
 """
 from __future__ import annotations
 
@@ -29,12 +25,6 @@ import os
 
 
 def _hydrate_env_from_secrets() -> None:
-    """Load a Secrets Manager secret (JSON key/values) into os.environ.
-
-    Runs BEFORE `import config` because config reads env vars at import time.
-    No-op unless the SECRETS_NAME (or SECRET_ARN) env var is set, so local runs
-    and plain-env-var setups are unaffected. boto3 ships with the Lambda runtime.
-    """
     secret_name = (os.getenv("SECRET_NAME") or os.getenv("SECRETS_NAME")
                    or os.getenv("SECRET_ARN"))
     if not secret_name:
@@ -51,7 +41,7 @@ def _hydrate_env_from_secrets() -> None:
         return
     for key, value in (data or {}).items():
         if value is not None:
-            os.environ.setdefault(key, str(value))   # real env vars win over secret
+            os.environ.setdefault(key, str(value))
 
 
 _hydrate_env_from_secrets()
@@ -65,55 +55,57 @@ from utils.logger import setup_logging
 from utils.holidays import is_market_holiday
 
 ET = ZoneInfo("America/New_York")
-TRADE_HOURS = {9, 11, 14}            # 9:35 AM, 11:35 AM, 2:35 PM ET
-MARKET_OPEN_MIN = 9 * 60 + 30        # 9:30 AM
-MARKET_CLOSE_MIN = 16 * 60           # 4:00 PM
+
+# Session window for scheduled jobs (10:00 AM – 4:00 PM ET)
+SESSION_START_MIN = 10 * 60          # 10:00 AM
+SESSION_END_MIN   = 16 * 60          # 4:00 PM
+
+# Hourly scans: 10 AM – 3 PM (top of hour)
+SCAN_START_HOUR = 10
+SCAN_END_HOUR   = 15
+
+# Trades on the same top-of-hour run as the scan
+TRADE_HOURS = {10, 12, 14}   # 10 AM, 12 PM, 2 PM ET
+
+# End-of-day Fib validation: 4 PM only
+FIB_VALIDATION_HOUR = 16
 
 log = logging.getLogger(__name__)
 
 
+def _run_kind(now_et: datetime) -> str:
+    """Return 'fib' | 'scan' | 'skip' based on ET clock (top of hour only)."""
+    if now_et.minute != 0:
+        return "skip"
+    h = now_et.hour
+    if h == FIB_VALIDATION_HOUR:
+        return "fib"
+    if SCAN_START_HOUR <= h <= SCAN_END_HOUR:
+        return "scan"
+    return "skip"
+
+
+def _in_session_window(now_et: datetime) -> bool:
+    """True during 10:00 AM – 4:00 PM ET on weekdays."""
+    if now_et.weekday() > 4:
+        return False
+    mins = now_et.hour * 60 + now_et.minute
+    return SESSION_START_MIN <= mins <= SESSION_END_MIN
+
+
 def _should_trade(now_et: datetime, event: dict) -> bool:
-    """Trade only in the 9 / 11 / 14 ET hours, unless the event overrides it."""
     if "trade" in event:
         return bool(event["trade"])
     return now_et.hour in TRADE_HOURS
 
 
-def _in_market_hours(now_et: datetime) -> bool:
-    if now_et.weekday() > 4:                 # Sat/Sun
-        return False
-    mins = now_et.hour * 60 + now_et.minute
-    return MARKET_OPEN_MIN <= mins <= MARKET_CLOSE_MIN
+def _run_scan_and_maybe_trade(now_et: datetime, event: dict, do_trade: bool) -> dict:
+    from scanner import resolve_universe, scan, record_top_picks
+    from signals.conviction import top_picks
 
-
-def lambda_handler(event, context):
-    event = event or {}
-    setup_logging()
-
-    now_et = datetime.now(ET)
-    force = bool(event.get("force"))
-
-    # ── Skip guards (holidays + outside market hours) ─────────────────────────
-    if not force:
-        if is_market_holiday(now_et.date()):
-            log.info("NYSE holiday (%s) — skipping.", now_et.date())
-            return {"status": "skipped", "reason": "holiday", "et": now_et.isoformat()}
-        if not _in_market_hours(now_et):
-            log.info("Outside market hours (%s ET) — skipping.", now_et.strftime("%H:%M"))
-            return {"status": "skipped", "reason": "outside_market_hours",
-                    "et": now_et.isoformat()}
-
-    do_trade = _should_trade(now_et, event)
     universe = event.get("universe") or config.DEFAULT_UNIVERSE
     top_n = int(event.get("top_n") or config.TOP_N_PICKS)
     dry_run = bool(event.get("dry_run", False)) or not config.TRADE_ENABLED
-
-    log.info("Run start: %s ET · universe=%s · trade=%s · dry_run=%s",
-             now_et.strftime("%Y-%m-%d %H:%M"), universe, do_trade, dry_run)
-
-    # ── Imports deferred so the heavy data libs load only inside the run ──────
-    from scanner import resolve_universe, scan, record_top_picks
-    from signals.conviction import top_picks
 
     ticker_list = resolve_universe(universe, config.MAX_TICKERS)
     if config.PERSONAL_WATCHLIST:
@@ -137,7 +129,6 @@ def lambda_handler(event, context):
     except Exception:
         log.warning("record_top_picks failed (non-fatal).", exc_info=True)
 
-    # ── Trading (only during the 9 / 11 / 14 ET windows) ──────────────────────
     bull_decisions, bear_decisions = [], []
     if do_trade:
         if not config.ALPACA_ENABLED:
@@ -150,7 +141,6 @@ def lambda_handler(event, context):
             executed = sum(1 for d in bull_decisions + bear_decisions if d.executed)
             log.info("Trade session: %d executed (dry_run=%s).", executed, dry_run)
 
-    # ── Persist to the database (replaces the hourly email) ───────────────────
     scan_id = None
     if config.DB_ENABLED:
         try:
@@ -167,9 +157,10 @@ def lambda_handler(event, context):
 
     return {
         "status": "ok",
+        "mode": "trade" if do_trade else "scan",
         "et": now_et.isoformat(),
         "universe": universe,
-        "mode": mode,
+        "scan_mode": mode,
         "analyzed": len(results),
         "bulls": len(bulls),
         "bears": len(bears),
@@ -179,6 +170,52 @@ def lambda_handler(event, context):
     }
 
 
+def lambda_handler(event, context):
+    event = event or {}
+    setup_logging()
+
+    now_et = datetime.now(ET)
+    force = bool(event.get("force"))
+    forced_mode = event.get("mode")
+
+    if forced_mode == "fib":
+        kind = "fib"
+    elif forced_mode in ("scan", "trade"):
+        kind = "scan"
+    else:
+        kind = _run_kind(now_et)
+
+    if not force:
+        if is_market_holiday(now_et.date()):
+            log.info("NYSE holiday (%s) — skipping.", now_et.date())
+            return {"status": "skipped", "reason": "holiday", "et": now_et.isoformat()}
+        if kind == "skip":
+            log.info("Not a scheduled run slot (%s ET) — skipping.", now_et.strftime("%H:%M"))
+            return {"status": "skipped", "reason": "not_scheduled",
+                    "et": now_et.isoformat()}
+        if not _in_session_window(now_et):
+            log.info("Outside session window (%s ET) — skipping.", now_et.strftime("%H:%M"))
+            return {"status": "skipped", "reason": "outside_session",
+                    "et": now_et.isoformat()}
+
+    log.info("Run start: %s ET · kind=%s · force=%s",
+             now_et.strftime("%Y-%m-%d %H:%M"), kind, force)
+
+    if kind == "fib":
+        from utils.fib_validation import validate_today_fib_hits
+        result = validate_today_fib_hits(now_et.date())
+        result["et"] = now_et.isoformat()
+        result["mode"] = "fib"
+        return result
+
+    if forced_mode == "trade":
+        do_trade = True
+    elif forced_mode == "scan":
+        do_trade = bool(event.get("trade", False))
+    else:
+        do_trade = _should_trade(now_et, event)
+    return _run_scan_and_maybe_trade(now_et, event, do_trade)
+
+
 if __name__ == "__main__":
-    # Local smoke test:  python lambda_function.py
-    print(lambda_handler({"force": True, "trade": False, "dry_run": True}, None))
+    print(lambda_handler({"force": True, "mode": "fib"}, None))
