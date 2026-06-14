@@ -3,7 +3,7 @@ python-dotenv>=1.0.0          # .env file loading
 requests>=2.31.0              # FMP REST API calls
 pandas>=2.1.0                 # DataFrame operations (yfinance dependency)
 numpy>=1.26.0                 # Numerical computation
-yfinance>=0.2.36              # Yahoo Finance OHLCV bars (fallback + backtesting)
+yfinance>=0.2.36,<0.3        # Yahoo Finance OHLCV bars (fallback + backtesting); pin to 0.2.x (1.x changed API)
 
 # ── Timezone handling ─────────────────────────────────────────────────────────
 # pytz is a fallback for Python < 3.9 where zoneinfo is unavailable.

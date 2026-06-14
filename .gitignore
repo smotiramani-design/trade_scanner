@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv_test/
+venv/
+
+# Lambda build artifacts
+build/
+dist/
+
+# Environment / secrets
+.env
+
+# OS
+.DS_Store
+
+# Scan output (generated)
+output/
