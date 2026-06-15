@@ -1,4 +1,3 @@
-import Link from "next/link";
 import {
   getTodayMomentumPicks,
   groupMomentumByScan,
@@ -23,7 +22,7 @@ export default async function MomentumTodayPage() {
       <>
         <div className="topbar">
           <div>
-            <div className="page-title">Momentum</div>
+            <div className="page-title">Daily Scans</div>
             <div className="page-sub">Connection error</div>
           </div>
         </div>
@@ -44,16 +43,13 @@ export default async function MomentumTodayPage() {
     <>
       <div className="topbar">
         <div>
-          <div className="page-title">Momentum</div>
+          <div className="page-title">Daily Scans</div>
           <div className="page-sub">
             {latest
               ? `Today's run ${latest.et_time} ET · pre-market screener`
               : "No run yet today"}
           </div>
         </div>
-        <Link href="/momentum/history" className="back-link" style={{ marginBottom: 0 }}>
-          History →
-        </Link>
       </div>
 
       {picks.length === 0 ? (

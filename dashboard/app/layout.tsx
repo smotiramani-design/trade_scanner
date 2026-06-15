@@ -3,8 +3,8 @@ import "./globals.css";
 import Nav from "@/components/Nav";
 
 export const metadata: Metadata = {
-  title: "Trade Scanner",
-  description: "Intraday conviction picks dashboard",
+  title: "Signal Desk",
+  description: "Intraday and daily momentum signal dashboard",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="layout">
           <aside className="sidebar">
             <div className="sidebar-logo">
-              TRADE<span>·</span>SCANNER
+              SIGNAL<span>·</span>DESK
             </div>
             <Nav />
             <div className="sidebar-footer">paper · read-only</div>

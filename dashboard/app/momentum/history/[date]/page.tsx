@@ -23,7 +23,9 @@ export default async function MomentumDayPage({ params }: { params: { date: stri
       <div className="topbar">
         <div>
           <div className="page-title">{date}</div>
-          <div className="page-sub">Pre-market momentum run</div>
+          <div className="page-sub">
+            {groups.length} scan{groups.length === 1 ? "" : "s"} this day
+          </div>
         </div>
       </div>
 

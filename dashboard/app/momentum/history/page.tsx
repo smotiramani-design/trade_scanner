@@ -17,8 +17,8 @@ export default async function MomentumHistoryPage() {
     <>
       <div className="topbar">
         <div>
-          <div className="page-title">Momentum History</div>
-          <div className="page-sub">Daily pre-market runs</div>
+          <div className="page-title">Historical Scans</div>
+          <div className="page-sub">Pick a day to drill into its daily run</div>
         </div>
       </div>
 

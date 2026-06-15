@@ -17,7 +17,7 @@ export default async function HistoryPage() {
     <>
       <div className="topbar">
         <div>
-          <div className="page-title">History</div>
+          <div className="page-title">Historical Scans</div>
           <div className="page-sub">Pick a day to drill into its hourly scans</div>
         </div>
       </div>
