@@ -188,4 +188,5 @@ a { color: inherit; text-decoration: none; }
 .back-link { font-size: 13px; color: var(--muted); margin-bottom: 16px; display: inline-block; }
 .back-link:hover { color: var(--text); }
 .error-box { background: var(--bear-dim); border: 1px solid var(--bear); border-radius: 8px; padding: 16px; color: var(--text); font-size: 13px; }
-.error-box code { font-family: var(--mono); color: var(--gold); }
+.fib-summary { margin-bottom: 24px; }
+.fib-stat-main .stat-value { font-size: 26px; }

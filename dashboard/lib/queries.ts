@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import type { PickRow, TradeRow, DaySummary, ScanGroup } from "./types";
+import type { PickRow, TradeRow, DaySummary, ScanGroup, FibHitStats } from "./types";
 
 // All picks for today (ET), ordered for display.
 export async function getTodayPicks(): Promise<PickRow[]> {
@@ -100,4 +100,64 @@ export function topConvictionByHour(
   return Array.from(map.entries())
     .map(([et_time, conviction]) => ({ et_time, conviction }))
     .sort((a, b) => (a.et_time < b.et_time ? -1 : 1));
+}
+
+/** ET calendar date as YYYY-MM-DD. */
+export function getEtTodayDateString(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
+
+/** True after 4 PM ET on tradeDate; always true for prior ET days. */
+export function isPastFibValidationTime(tradeDate: string): boolean {
+  const today = getEtTodayDateString();
+  if (tradeDate < today) return true;
+  if (tradeDate > today) return false;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    hour12: false,
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  return hour >= 16;
+}
+
+/** Aggregate fib_hit results for one ET day (reads picks table). */
+export async function getFibHitStats(tradeDate: string): Promise<FibHitStats | null> {
+  const { data, error } = await supabase
+    .from("picks")
+    .select("fib_hit, fib_target, fib_validated_at")
+    .eq("trade_date", tradeDate)
+    .not("fib_target", "is", null);
+  if (error) throw error;
+
+  const rows = (data ?? []) as {
+    fib_hit: boolean | null;
+    fib_target: number | null;
+    fib_validated_at: string | null;
+  }[];
+
+  if (rows.length === 0) return null;
+
+  let hits = 0;
+  let misses = 0;
+  let unknown = 0;
+  for (const row of rows) {
+    if (row.fib_validated_at == null) continue;
+    if (row.fib_hit === true) hits += 1;
+    else if (row.fib_hit === false) misses += 1;
+    else unknown += 1;
+  }
+
+  const validated = hits + misses + unknown;
+  if (validated === 0) return null;
+
+  return {
+    hits,
+    misses,
+    unknown,
+    validated,
+    with_target: rows.length,
+    hit_pct: Math.round((hits / validated) * 100),
+  };
 }

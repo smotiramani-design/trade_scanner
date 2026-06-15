@@ -53,6 +53,15 @@ export interface DaySummary {
   last_et_time: string;
 }
 
+export interface FibHitStats {
+  hits: number;
+  misses: number;
+  unknown: number;
+  validated: number;
+  with_target: number;
+  hit_pct: number;
+}
+
 // Picks for one scan (one hour), split by direction.
 export interface ScanGroup {
   scan_id: number;

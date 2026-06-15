@@ -1,8 +1,8 @@
 """
 utils/fib_validation.py — End-of-day Fib target hit validation.
 
-For each pick from today's hourly scans (top-of-hour runs), check whether price
-reached the Fib target within the next 60 minutes:
+For each pick on trade_date with a fib_target, check whether price reached
+the target within the 60 minutes after that scan's run_ts:
 
   bull → window high >= fib_target
   bear → window low  <= fib_target
@@ -121,8 +121,8 @@ def _hit(direction: str, target: float, hi: Optional[float], lo: Optional[float]
 
 def validate_today_fib_hits(trade_date=None) -> dict:
     """
-    Validate Fib targets for all hourly-scan picks on trade_date.
-    Only picks from top-of-hour scans (et_time ending in :00) are evaluated.
+    Validate Fib targets for all picks on trade_date that have a fib_target.
+    Window start = each scan's run_ts (actual run time, not et_time label).
     """
     if not config.DB_ENABLED:
         log.warning("DB disabled — skipping fib validation.")
@@ -151,7 +151,6 @@ def validate_today_fib_hits(trade_date=None) -> dict:
                 JOIN scans s ON s.id = p.scan_id
                 WHERE p.trade_date = %s
                   AND p.fib_target IS NOT NULL
-                  AND p.et_time ~ '^[0-9]{2}:00$'
                 ORDER BY s.run_ts, p.id
                 """,
                 (trade_date,),

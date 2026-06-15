@@ -1,16 +1,26 @@
 import Link from "next/link";
-import { getDayPicks, groupByScan } from "@/lib/queries";
+import {
+  getDayPicks,
+  groupByScan,
+  getFibHitStats,
+  isPastFibValidationTime,
+} from "@/lib/queries";
 import ScanSection from "@/components/ScanSection";
-import type { PickRow } from "@/lib/types";
+import FibHitSummary from "@/components/FibHitSummary";
+import type { PickRow, FibHitStats } from "@/lib/types";
 
 export const revalidate = 60;
 
 export default async function DayPage({ params }: { params: { date: string } }) {
   const { date } = params;
   let picks: PickRow[] = [];
+  let fibStats: FibHitStats | null = null;
   let err: string | null = null;
   try {
     picks = await getDayPicks(date);
+    if (isPastFibValidationTime(date)) {
+      fibStats = await getFibHitStats(date);
+    }
   } catch (e) {
     err = e instanceof Error ? e.message : String(e);
   }
@@ -35,9 +45,13 @@ export default async function DayPage({ params }: { params: { date: string } }) 
           <p>No picks recorded for {date}.</p>
         </div>
       ) : (
-        groups.map((g, i) => (
-          <ScanSection key={g.scan_id} group={g} defaultExpanded={i === 0} />
-        ))
+        <>
+          {fibStats && <FibHitSummary stats={fibStats} label="that day" />}
+
+          {groups.map((g, i) => (
+            <ScanSection key={g.scan_id} group={g} defaultExpanded={i === 0} />
+          ))}
+        </>
       )}
     </>
   );
