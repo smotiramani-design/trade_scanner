@@ -22,6 +22,10 @@ export interface PickRow {
   mtf_aligned: boolean | null;
   earnings_soon: boolean | null;
   verdict: string | null;
+  analysis: string | null;
+  key_signals: string[] | null;
+  conflicting: string[] | null;
+  signals: Record<string, { bias: string; label: string }> | null;
   universe: string | null;
   trade_run: boolean | null;
   run_ts: string;

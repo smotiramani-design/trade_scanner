@@ -1,4 +1,6 @@
 import type { PickRow } from "@/lib/types";
+import { parseSignalChips } from "@/lib/signals";
+import SignalChips from "./SignalChips";
 
 function fmtPrice(n: number | null) {
   return n == null ? "—" : `$${n.toFixed(2)}`;
@@ -12,6 +14,8 @@ export default function PickCard({ pick }: { pick: PickRow }) {
   const isBull = pick.direction === "bull";
   const conviction = pick.conviction ?? 0;
   const chgUp = (pick.chg_pct ?? 0) >= 0;
+  const signalChips = parseSignalChips(pick.signals);
+  const nSignals = signalChips.length || 10;
 
   return (
     <div className={`pick-card ${isBull ? "bull-card" : "bear-card"}`}>
@@ -40,10 +44,29 @@ export default function PickCard({ pick }: { pick: PickRow }) {
 
         <div className="card-row">
           <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
-            #{pick.rank} · score {pick.net_score != null ? (pick.net_score > 0 ? `+${pick.net_score}` : pick.net_score) : "—"}
+            #{pick.rank} · score{" "}
+            {pick.net_score != null
+              ? `${pick.net_score > 0 ? "+" : ""}${pick.net_score}/${nSignals}`
+              : "—"}
           </span>
           {pick.grade && <span className="grade-badge">{pick.grade}</span>}
         </div>
+
+        {pick.verdict && (
+          <div className="verdict-line">{pick.verdict}</div>
+        )}
+
+        <SignalChips signals={signalChips} />
+
+        {pick.analysis && (
+          <div className="analysis-text">{pick.analysis}</div>
+        )}
+
+        {pick.conflicting && pick.conflicting.length > 0 && (
+          <div className="conflict-flag">
+            ⚠ Conflicting: {pick.conflicting.join(", ")}
+          </div>
+        )}
 
         {(pick.fib_target != null || pick.fib_label) && (
           <div className="fib-row">
