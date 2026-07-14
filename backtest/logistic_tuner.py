@@ -34,17 +34,32 @@ conviction weights and written to conviction.py; the context coefficients are
 reported for insight and set up the future "rank by P(hit)" step. This keeps the
 rest of the pipeline (conviction %, grades, trade gates) unchanged.
 
+── Training data source (step #2 — selection-bias fix) ─────────────────────────
+By default this trains on `scan_features` — the FULL scanned universe, including
+the tickers the scanner rejected — not just the surfaced top picks. Training on
+picks-only was biased: the model never saw the rejected setups, so it couldn't
+learn what separates good from bad. `--source` controls this:
+  auto      (default) use scan_features if it has enough labeled rows, else picks
+  features  force the de-biased universe
+  picks     force top-picks only (legacy behaviour)
+When training on features, the report also shows the selection-bias gap (hit rate
+of picks vs rejected names).
+
 Usage:
-  python -m backtest.logistic_tuner                 # report only, all data
-  python -m backtest.logistic_tuner --days 30       # last 30 days of picks
-  python -m backtest.logistic_tuner --apply         # write weights to conviction.py
-  python -m backtest.logistic_tuner --no-regime     # skip SPY fetch (no network)
+  python -m backtest.logistic_tuner                    # report only, all data
+  python -m backtest.logistic_tuner --days 30          # last 30 days
+  python -m backtest.logistic_tuner --apply --save-db  # write weights + log run
+  python -m backtest.logistic_tuner --source picks     # legacy picks-only
+  python -m backtest.logistic_tuner --no-regime        # skip SPY fetch (no network)
+
+--save-db writes the run (weights, metrics, coefficients) to ml_weight_runs so the
+dashboard's Machine Learning tab can display it.
 
 Requires DATABASE_URL set and scikit-learn + psycopg installed (requirements.txt).
 Market regime fetches SPY daily bars (needs network); use --no-regime to skip.
 
-No lookahead: evaluation uses a time-ordered split (train on older picks, test on
-newer). Regime for a pick's day uses SPY data from the *prior* session only.
+No lookahead: evaluation uses a time-ordered split (train on older rows, test on
+newer). Regime for a row's day uses SPY data from the *prior* session only.
 """
 from __future__ import annotations
 
@@ -86,6 +101,7 @@ class LabeledPick:
     chg_pct:       float = 0.0
     atr_stop:      Optional[float] = None
     price:         Optional[float] = None
+    was_pick:      Optional[bool] = None  # scan_features only: made the top-N?
 
     @property
     def dir_sign(self) -> float:
@@ -173,12 +189,13 @@ def _connect():
     return psycopg.connect(config.DATABASE_URL)
 
 
-def load_labeled_picks(days: Optional[int] = None, conn=None) -> List[LabeledPick]:
-    """Read every pick with a resolved fib_hit label from Postgres/Supabase."""
+def _load_labeled(table: str, days: Optional[int], conn) -> List[LabeledPick]:
+    """Shared loader for the picks and scan_features tables (identical columns)."""
     import json
 
     own = conn is None
     conn = conn or _connect()
+    with_pick = table == "scan_features"
     try:
         where = ("WHERE fib_hit IS NOT NULL "
                  "AND signals IS NOT NULL "
@@ -187,9 +204,11 @@ def load_labeled_picks(days: Optional[int] = None, conn=None) -> List[LabeledPic
         if days:
             where += " AND trade_date >= (CURRENT_DATE - %s::int)"
             params.append(int(days))
-        sql = (f"SELECT direction, signals, fib_hit, trade_date, et_time, "
-               f"conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price "
-               f"FROM picks {where} "
+        cols = ("direction, signals, fib_hit, trade_date, et_time, "
+                "conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price")
+        if with_pick:
+            cols += ", was_pick"
+        sql = (f"SELECT {cols} FROM {table} {where} "
                f"ORDER BY trade_date, et_time, id")
         with conn.cursor() as cur:
             cur.execute(sql, params)
@@ -199,8 +218,10 @@ def load_labeled_picks(days: Optional[int] = None, conn=None) -> List[LabeledPic
             conn.close()
 
     picks: List[LabeledPick] = []
-    for (direction, signals, fib_hit, trade_date, et_time,
-         conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price) in rows:
+    for row in rows:
+        (direction, signals, fib_hit, trade_date, et_time,
+         conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price) = row[:11]
+        was_pick = bool(row[11]) if with_pick else None
         if isinstance(signals, str):
             try:
                 signals = json.loads(signals)
@@ -218,9 +239,50 @@ def load_labeled_picks(days: Optional[int] = None, conn=None) -> List[LabeledPic
             chg_pct       = float(chg_pct) if chg_pct is not None else 0.0,
             atr_stop      = float(atr_stop) if atr_stop is not None else None,
             price         = float(price) if price is not None else None,
+            was_pick      = was_pick,
         ))
-    log.info("Loaded %d labeled picks from Supabase.", len(picks))
+    log.info("Loaded %d labeled rows from %s.", len(picks), table)
     return picks
+
+
+def load_labeled_picks(days: Optional[int] = None, conn=None) -> List[LabeledPick]:
+    """Read every top-N pick with a resolved fib_hit label."""
+    return _load_labeled("picks", days, conn)
+
+
+def load_labeled_features(days: Optional[int] = None, conn=None) -> List[LabeledPick]:
+    """Read the full labeled scanned universe (de-biased training set)."""
+    return _load_labeled("scan_features", days, conn)
+
+
+def load_training_data(
+    source: str = "auto",
+    days:   Optional[int] = None,
+    min_samples: int = 30,
+) -> Tuple[List[LabeledPick], str]:
+    """
+    Resolve the training source and load it.
+
+    source="auto": prefer the de-biased scan_features; fall back to picks if the
+    universe log is empty/missing or has too few labeled rows.
+    Returns (picks, resolved_source).
+    """
+    if source == "picks":
+        return load_labeled_picks(days), "picks"
+    if source == "features":
+        return load_labeled_features(days), "features"
+
+    # auto
+    try:
+        feats = load_labeled_features(days)
+    except Exception as e:
+        log.info("scan_features unavailable (%s) — using picks.", e)
+        return load_labeled_picks(days), "picks"
+    if len(feats) >= min_samples:
+        return feats, "features"
+    log.info("Only %d labeled scan_features rows (< %d) — using picks instead.",
+             len(feats), min_samples)
+    return load_labeled_picks(days), "picks"
 
 
 # ── Design matrix (signals + context + regime) ────────────────────────────────
@@ -393,19 +455,127 @@ def coefs_to_weights(
             for c in coefs]
 
 
+# ── Selection-bias stats (features source only) ───────────────────────────────
+
+def selection_bias(picks: Sequence[LabeledPick]) -> Optional[dict]:
+    """
+    Compare hit rate of surfaced picks vs the rejected universe.
+
+    Only meaningful when training on scan_features (was_pick is set). A large gap
+    is exactly why training on picks-only was biased: the model never saw the
+    rejected setups. Returns None if was_pick isn't available.
+    """
+    labeled = [p for p in picks if p.was_pick is not None]
+    if not labeled:
+        return None
+    picked = [p for p in labeled if p.was_pick]
+    rest = [p for p in labeled if not p.was_pick]
+
+    def _rate(rows):
+        return round(100.0 * sum(r.hit for r in rows) / len(rows), 1) if rows else None
+
+    return {
+        "n_pick": len(picked),
+        "n_nonpick": len(rest),
+        "pick_hit_rate": _rate(picked),
+        "nonpick_hit_rate": _rate(rest),
+    }
+
+
+# ── Persist a run to Supabase (powers the dashboard ML tab) ───────────────────
+
+def save_run(
+    fit:            FitResult,
+    new_weights:    List[float],
+    *,
+    source:         str,
+    days:           Optional[int],
+    use_regime:     bool,
+    use_context:    bool,
+    c_param:        float,
+    applied:        bool,
+    bias:           Optional[dict],
+    conn=None,
+) -> Optional[int]:
+    """Insert one ml_weight_runs row. Returns the new id, or None if DB off."""
+    import json
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    if not config.DB_ENABLED:
+        log.warning("DB disabled — not saving ML run.")
+        return None
+
+    et = ZoneInfo("America/New_York")
+    now_et = datetime.now(timezone.utc).astimezone(et)
+    base_rate = round(100.0 * fit.n_hits / fit.n_samples, 1) if fit.n_samples else None
+
+    weights_json = [
+        {"signal": SIG_NAMES[i],
+         "old": CURRENT_WEIGHTS[i] if i < len(CURRENT_WEIGHTS) else 1.0,
+         "new": new_weights[i] if i < len(new_weights) else None,
+         "coef": round(fit.signal_coefs[i], 4) if i < len(fit.signal_coefs) else None}
+        for i in range(len(SIG_NAMES))
+    ]
+    context_json = [{"name": n, "coef": round(c, 4)} for n, c in fit.context_coefs]
+
+    from utils.db_writer import init_db
+    own = conn is None
+    conn = conn or _connect()
+    try:
+        init_db(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO ml_weight_runs
+                   (trade_date, et_time, source, lookback_days, n_samples, n_hits,
+                    n_misses, base_rate, train_acc, test_acc, test_auc, n_train,
+                    n_test, use_regime, use_context, c_param, applied, weights,
+                    context_coefs, selection_bias)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   RETURNING id""",
+                (now_et.date(), now_et.strftime("%H:%M"), source, days,
+                 fit.n_samples, fit.n_hits, fit.n_misses, base_rate,
+                 round(fit.train_acc * 100, 1),
+                 round(fit.test_acc * 100, 1) if fit.test_acc is not None else None,
+                 round(fit.test_auc, 4) if fit.test_auc is not None else None,
+                 fit.n_train, fit.n_test, use_regime, use_context, c_param, applied,
+                 json.dumps(weights_json), json.dumps(context_json),
+                 json.dumps(bias) if bias else None),
+            )
+            run_id = cur.fetchone()[0]
+        conn.commit()
+        log.info("Saved ML run #%d to ml_weight_runs.", run_id)
+        return run_id
+    except Exception:
+        conn.rollback()
+        log.exception("Failed to save ML run.")
+        return None
+    finally:
+        if own:
+            conn.close()
+
+
 # ── Report ────────────────────────────────────────────────────────────────────
 
-def print_report(fit: FitResult, new_weights: List[float]) -> None:
+def print_report(fit: FitResult, new_weights: List[float],
+                 source: str = "picks", bias: Optional[dict] = None) -> None:
     bar = "=" * 74
     print(f"\n{bar}")
     print("LOGISTIC-REGRESSION CONVICTION WEIGHT LEARNING")
     print(bar)
+    src_label = ("full scanned universe (de-biased)" if source == "features"
+                 else "top picks only")
+    print(f"\nData source   : {source}  — {src_label}")
     if fit.n_samples:
         base = 100 * fit.n_hits / fit.n_samples
-        print(f"\nLabeled picks : {fit.n_samples}  "
+        print(f"Labeled rows  : {fit.n_samples}  "
               f"({fit.n_hits} hits / {fit.n_misses} misses, base {base:.1f}%)")
     else:
-        print("\nLabeled picks : 0")
+        print("Labeled rows  : 0")
+    if bias and bias.get("pick_hit_rate") is not None:
+        print(f"Selection bias: picks {bias['pick_hit_rate']}% "
+              f"(n={bias['n_pick']}) vs rejected {bias['nonpick_hit_rate']}% "
+              f"(n={bias['n_nonpick']})")
     n_ctx = len(fit.feature_names) - fit.n_signal_cols
     print(f"Features      : {fit.n_signal_cols} signals + {n_ctx} context/regime")
     print(f"Train accuracy: {fit.train_acc * 100:.1f}%  (in-sample, all data)")
@@ -457,33 +627,40 @@ Examples:
   python -m backtest.logistic_tuner --no-regime --days 60 --apply
         """,
     )
+    parser.add_argument("--source", choices=["auto", "features", "picks"],
+                        default="auto",
+                        help="Training data: 'features' = full de-biased universe, "
+                             "'picks' = top-N only, 'auto' = features if available")
     parser.add_argument("--days", type=int, default=None,
-                        help="Only use picks from the last N days (default: all)")
+                        help="Only use rows from the last N days (default: all)")
     parser.add_argument("--apply", action="store_true",
                         help="Write learned signal weights into signals/conviction.py")
+    parser.add_argument("--save-db", action="store_true",
+                        help="Persist this run to ml_weight_runs (for the dashboard)")
     parser.add_argument("--min-samples", type=int, default=30,
-                        help="Minimum labeled picks required to trust the fit")
+                        help="Minimum labeled rows required to trust the fit")
     parser.add_argument("--min-weight", type=float, default=0.5)
     parser.add_argument("--max-weight", type=float, default=2.0)
     parser.add_argument("--C", type=float, default=1.0,
                         help="Inverse L2 strength (smaller = more regularisation)")
     parser.add_argument("--test-frac", type=float, default=0.3,
-                        help="Fraction of newest picks held out for walk-forward test")
+                        help="Fraction of newest rows held out for walk-forward test")
     parser.add_argument("--no-context", action="store_true",
-                        help="Drop the picks-context features")
+                        help="Drop the pick-context features")
     parser.add_argument("--no-regime", action="store_true",
                         help="Skip SPY market-regime features (avoids network fetch)")
     args = parser.parse_args(argv)
 
     try:
-        picks = load_labeled_picks(days=args.days)
+        picks, source = load_training_data(args.source, days=args.days,
+                                           min_samples=args.min_samples)
     except Exception as e:
-        print(f"ERROR: could not load picks — {e}")
+        print(f"ERROR: could not load training data — {e}")
         return 1
 
     if not picks:
-        print("No labeled picks found. Let the 4 PM Fib validation run for a few "
-              "days first (picks need fib_hit set), then re-run this.")
+        print("No labeled rows found. Let the 4 PM validation run for a few days "
+              "first (rows need fib_hit set), then re-run this.")
         return 1
 
     n = len(picks)
@@ -491,11 +668,11 @@ Examples:
     n_misses = n - n_hits
 
     if n < args.min_samples:
-        print(f"Only {n} labeled picks (need >= {args.min_samples}). "
+        print(f"Only {n} labeled rows (need >= {args.min_samples}). "
               f"Reporting anyway, but NOT applying — too little data to trust.")
     if n_hits == 0 or n_misses == 0:
         only = "hits" if n_misses == 0 else "misses"
-        print(f"All {n} labeled picks are {only}; cannot learn from a single "
+        print(f"All {n} labeled rows are {only}; cannot learn from a single "
               f"class yet. Keeping current weights.")
         return 1
 
@@ -512,16 +689,23 @@ Examples:
     new_weights = coefs_to_weights(fit.signal_coefs,
                                    min_weight=args.min_weight,
                                    max_weight=args.max_weight)
-    print_report(fit, new_weights)
+    bias = selection_bias(picks) if source == "features" else None
+    print_report(fit, new_weights, source=source, bias=bias)
 
+    applied = False
     if args.apply:
         if n < args.min_samples:
             print("Refusing to --apply with insufficient data "
-                  f"({n} < {args.min_samples}). Re-run once more picks are labeled.")
-            return 1
-        apply_weights(new_weights)
+                  f"({n} < {args.min_samples}). Re-run once more rows are labeled.")
+        else:
+            applied = apply_weights(new_weights)
     else:
         print("Tip: re-run with --apply to write these weights to conviction.py.")
+
+    if args.save_db:
+        save_run(fit, new_weights, source=source, days=args.days,
+                 use_regime=not args.no_regime, use_context=not args.no_context,
+                 c_param=args.C, applied=applied, bias=bias)
 
     return 0
 

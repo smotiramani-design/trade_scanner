@@ -204,8 +204,16 @@ def lambda_handler(event, context):
              now_et.strftime("%Y-%m-%d %H:%M"), kind, force)
 
     if kind == "fib":
-        from utils.fib_validation import validate_today_fib_hits
+        from utils.fib_validation import (
+            validate_today_fib_hits, validate_today_feature_hits,
+        )
         result = validate_today_fib_hits(now_et.date())
+        # ENH-ML-02: also label the full scanned universe for de-biased training.
+        if config.LOG_UNIVERSE:
+            try:
+                result["features"] = validate_today_feature_hits(now_et.date())
+            except Exception:
+                log.exception("Feature validation failed (non-fatal).")
         result["et"] = now_et.isoformat()
         result["mode"] = "fib"
         return result

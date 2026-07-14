@@ -123,3 +123,76 @@ export interface MomentumScanGroup {
   trade: MomentumPickRow[];
   watch: MomentumPickRow[];
 }
+
+// ── Machine Learning ─────────────────────────────────────────────────────────
+
+// One learned signal weight: hand-tuned baseline vs model-learned value.
+export interface MlWeightItem {
+  signal: string;
+  old: number | null;
+  new: number | null;
+  coef: number | null;
+}
+
+// A context/regime coefficient (insight only, not written to weights).
+export interface MlContextCoef {
+  name: string;
+  coef: number;
+}
+
+// Selection-bias comparison (picks vs rejected universe).
+export interface MlSelectionBias {
+  n_pick: number;
+  n_nonpick: number;
+  pick_hit_rate: number | null;
+  nonpick_hit_rate: number | null;
+}
+
+// One row of ml_weight_runs — a single weight-tuning run.
+export interface MlRunRow {
+  id: number;
+  run_ts: string;
+  trade_date: string | null;
+  et_time: string | null;
+  source: string | null;             // "features" | "picks"
+  lookback_days: number | null;
+  n_samples: number | null;
+  n_hits: number | null;
+  n_misses: number | null;
+  base_rate: number | null;
+  train_acc: number | null;
+  test_acc: number | null;
+  test_auc: number | null;
+  n_train: number | null;
+  n_test: number | null;
+  use_regime: boolean | null;
+  use_context: boolean | null;
+  c_param: number | null;
+  applied: boolean | null;
+  weights: MlWeightItem[] | null;
+  context_coefs: MlContextCoef[] | null;
+  selection_bias: MlSelectionBias | null;
+}
+
+// Aggregate stats over the scan_features training set.
+export interface FeatureDatasetStats {
+  total: number;
+  labeled: number;
+  hits: number;
+  misses: number;
+  hit_pct: number | null;
+  picks: number;
+  nonpicks: number;
+  pick_hit_pct: number | null;
+  nonpick_hit_pct: number | null;
+  days: number;
+  first_date: string | null;
+  last_date: string | null;
+}
+
+// Per-day labeled-row coverage for the training-data timeline.
+export interface FeatureDayCoverage {
+  trade_date: string;
+  labeled: number;
+  hits: number;
+}

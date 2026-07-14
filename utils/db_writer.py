@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 import config
 from signals import SIG_NAMES
 from signals.base import TickerAnalysis
-from signals.conviction import ConvictionScore
+from signals.conviction import ConvictionScore, score_conviction
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -101,6 +101,45 @@ def _pick_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
         float(atr) if atr else None,
         json.dumps(_signals_json(ta)),
     )
+
+
+_DIRECTION_SHORT = {"bullish": "bull", "bearish": "bear", "neutral": "neutral"}
+
+
+def _feature_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
+                 was_pick: bool, trade_date, et_time: str) -> tuple:
+    """One scan_features row for a single scanned ticker (full universe)."""
+    import json
+    fib_t, fib_l = _fib_target(ta)
+    atr = getattr(ta, "atr_stop", None)
+    return (
+        scan_id, trade_date, et_time,
+        ta.ticker, ta.company_name or None, getattr(ta, "sector", "") or None,
+        _DIRECTION_SHORT.get(cs.direction, "neutral"), bool(was_pick),
+        ta.net_score, cs.conviction_pct, cs.weighted_score, cs.grade,
+        ta.price, ta.chg_pct,
+        bool(getattr(ta, "mtf_aligned", True)),
+        bool(getattr(ta, "earnings_soon", False)),
+        float(atr) if atr else None,
+        fib_t, fib_l,
+        json.dumps(_signals_json(ta)),
+    )
+
+
+def _feature_rows(scan_id: int, results: Sequence[TickerAnalysis],
+                  pick_tickers: set, trade_date, et_time: str) -> List[tuple]:
+    """Score every scanned ticker and build its scan_features row."""
+    rows: List[tuple] = []
+    for ta in results:
+        try:
+            cs = score_conviction(ta)
+        except Exception:
+            log.debug("score_conviction failed for %s", getattr(ta, "ticker", "?"),
+                      exc_info=True)
+            continue
+        rows.append(_feature_row(scan_id, ta, cs, ta.ticker in pick_tickers,
+                                 trade_date, et_time))
+    return rows
 
 
 def _trade_rows(scan_id: int, decisions: Sequence, dry_run: bool,
@@ -181,6 +220,23 @@ def write_scan(
                     pick_rows,
                 )
 
+            # ENH-ML-02: log the full scanned universe for de-biased ML training.
+            feature_rows: List[tuple] = []
+            if config.LOG_UNIVERSE and results:
+                pick_tickers = {ta.ticker for ta, _ in bulls} | {ta.ticker for ta, _ in bears}
+                feature_rows = _feature_rows(scan_id, results, pick_tickers,
+                                             trade_date, et_time)
+                if feature_rows:
+                    cur.executemany(
+                        """INSERT INTO scan_features
+                           (scan_id, trade_date, et_time, ticker, company, sector,
+                            direction, was_pick, net_score, conviction, weighted_score,
+                            grade, price, chg_pct, mtf_aligned, earnings_soon, atr_stop,
+                            fib_target, fib_label, signals)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        feature_rows,
+                    )
+
             trade_rows = (
                 _trade_rows(scan_id, bull_decisions, dry_run, trade_date, et_time)
                 + _trade_rows(scan_id, bear_decisions, dry_run, trade_date, et_time)
@@ -196,8 +252,8 @@ def write_scan(
                 )
 
         conn.commit()
-        log.info("DB write: scan #%d — %d picks, %d trade rows.",
-                 scan_id, len(pick_rows), len(trade_rows))
+        log.info("DB write: scan #%d — %d picks, %d features, %d trade rows.",
+                 scan_id, len(pick_rows), len(feature_rows), len(trade_rows))
         return scan_id
     except Exception:
         conn.rollback()
