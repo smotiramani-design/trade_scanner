@@ -1,56 +1,62 @@
 """
 backtest/logistic_tuner.py — Learn conviction weights from labeled picks.
 
-This is the machine-learning upgrade to weight_tuner.py. Instead of the
-win/loss-alignment *heuristic*, it fits an L2-regularised logistic regression
-that predicts whether a pick's Fibonacci target was hit (picks.fib_hit) from the
-10-signal vector, then turns the learned coefficients into conviction weights.
+Machine-learning upgrade to weight_tuner.py. It fits an L2-regularised logistic
+regression that predicts whether a pick's Fibonacci target was hit
+(picks.fib_hit) and turns the learned coefficients into conviction weights.
 
 Plain-English version:
-  Every past pick recorded (a) what each of the 10 signals said and (b) whether
-  the trade's target actually got hit. This reads all of those, figures out how
-  much to trust each signal (turns a dial up or down per signal), and writes the
-  new dials into signals/conviction.py. Re-run it weekly as more labeled picks
-  pile up in Supabase and the weights keep adapting.
+  Every past pick recorded (a) what each of the 10 signals said, (b) some
+  context (conviction, time of day, earnings, volatility), and — now — (c) what
+  the broader market was doing that day. This reads all of it, figures out how
+  much to trust each signal *given that context*, and writes the new signal dials
+  into signals/conviction.py. Re-run weekly as more labeled picks accumulate.
 
-Where the data comes from:
-  The `picks` table in Postgres/Supabase. A pick is "labeled" once the 4 PM Fib
-  validation job has set `fib_hit` (True = target hit, False = missed). Signals
-  are read from the `signals` JSONB column ({name: {bias, label}}).
+── Feature enrichment (step #1) ───────────────────────────────────────────────
+The model no longer sees only 10 crude flags. It also gets:
 
-Feature encoding (per signal, relative to the pick's own direction):
-  +1  signal agreed with the trade direction
-  -1  signal disagreed
-   0  neutral / missing
-So a positive learned coefficient means "when this signal agrees, hit-rate goes
-up" → higher weight. A near-zero coefficient means the signal barely matters.
+  Context (from the picks table, free):
+    conviction, mtf_aligned, earnings_soon, time-of-day, |chg%|, ATR stop-distance
+  Market regime (reconstructed from SPY daily bars, direction-signed):
+    trend (SPY vs its 20-day SMA), 5-day momentum, realised volatility
+
+Why this matters: a bullish setup in a rallying market and the same setup in a
+sell-off used to be identical inputs. Regime tells the model which way the wind
+is blowing. The regime/context features are direction-signed where relevant so a
+positive value always means "this favours the trade".
+
+── Important: only the 10 signal weights are written back ──────────────────────
+The context + regime features are included as **statistical controls**. Adding
+them makes the estimate of each *signal's* weight more accurate (it removes
+omitted-variable bias — e.g. crediting a signal for wins that were really just a
+strong market). But only the first 10 coefficients (the signals) are mapped to
+conviction weights and written to conviction.py; the context coefficients are
+reported for insight and set up the future "rank by P(hit)" step. This keeps the
+rest of the pipeline (conviction %, grades, trade gates) unchanged.
 
 Usage:
-  # Report only (does not touch conviction.py):
-  python -m backtest.logistic_tuner
+  python -m backtest.logistic_tuner                 # report only, all data
+  python -m backtest.logistic_tuner --days 30       # last 30 days of picks
+  python -m backtest.logistic_tuner --apply         # write weights to conviction.py
+  python -m backtest.logistic_tuner --no-regime     # skip SPY fetch (no network)
 
-  # Only use the last 30 days of labeled picks:
-  python -m backtest.logistic_tuner --days 30
+Requires DATABASE_URL set and scikit-learn + psycopg installed (requirements.txt).
+Market regime fetches SPY daily bars (needs network); use --no-regime to skip.
 
-  # Learn AND write the new weights into signals/conviction.py:
-  python -m backtest.logistic_tuner --apply
-
-Requires DATABASE_URL to be set (same Supabase URL used by the scanner) and
-scikit-learn + psycopg installed (see requirements.txt).
-
-IMPORTANT — no lookahead: evaluation uses a time-ordered split (train on older
-picks, test on newer ones), never a random split, so the reported test accuracy
-is an honest estimate of forward performance rather than a fooled-by-the-future
-number.
+No lookahead: evaluation uses a time-ordered split (train on older picks, test on
+newer). Regime for a pick's day uses SPY data from the *prior* session only.
 """
 from __future__ import annotations
 
 import argparse
+import bisect
 import logging
+import statistics
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -61,16 +67,29 @@ from backtest.weight_tuner import CURRENT_WEIGHTS, apply_weights
 log = logging.getLogger(__name__)
 N_SIGNALS = len(SIG_NAMES)
 
+CONTEXT_NAMES = ["conviction", "mtf_align", "earnings", "et_hour", "abs_chg", "atr_pct"]
+REGIME_NAMES = ["mkt_trend", "mkt_mom", "mkt_vol"]
+
 
 # ── Data model ────────────────────────────────────────────────────────────────
 
 @dataclass
 class LabeledPick:
-    direction:  str          # "bull" | "bear"
-    features:   List[int]    # aligned encoding per signal: +1 / -1 / 0
-    hit:        int          # 1 = fib target hit, 0 = missed
-    trade_date: str          # ET calendar day (for chronological ordering)
-    et_time:    str          # ET HH:MM (for chronological ordering)
+    direction:     str            # "bull" | "bear"
+    signals_feat:  List[int]      # 10 aligned signal values: +1 / -1 / 0
+    hit:           int            # 1 = fib target hit, 0 = missed
+    trade_date:    Optional[date] # ET calendar day (for regime lookup + ordering)
+    et_time:       str            # ET HH:MM (for ordering + time-of-day feature)
+    conviction:    float = 0.0
+    mtf_aligned:   int = 1
+    earnings_soon: int = 0
+    chg_pct:       float = 0.0
+    atr_stop:      Optional[float] = None
+    price:         Optional[float] = None
+
+    @property
+    def dir_sign(self) -> float:
+        return 1.0 if self.direction == "bull" else -1.0
 
 
 def _aligned(bias: Optional[str], direction: str) -> int:
@@ -90,6 +109,58 @@ def _features_from_signals(signals: dict, direction: str) -> List[int]:
     return feats
 
 
+# ── Market regime (reconstructed from SPY daily bars) ─────────────────────────
+
+class RegimeLookup:
+    """Per-day SPY regime: (trend, momentum, volatility), read as of the prior day."""
+
+    def __init__(self, by_date: dict):
+        self._dates: List[date] = sorted(by_date)
+        self._map = by_date
+
+    def for_date(self, d: Optional[date]) -> Tuple[float, float, float]:
+        """Regime as of the last SPY session strictly before d (no lookahead)."""
+        if d is None or not self._dates:
+            return (0.0, 0.0, 0.0)
+        i = bisect.bisect_left(self._dates, d)
+        if i == 0:
+            return (0.0, 0.0, 0.0)
+        return self._map[self._dates[i - 1]]
+
+
+def load_spy_regime() -> Optional[RegimeLookup]:
+    """Fetch SPY daily bars and compute per-day trend / momentum / volatility."""
+    try:
+        from data.yahoo_client import get_bars
+        bars = get_bars("SPY", market_open=False)
+    except Exception as e:  # network or driver issues — degrade gracefully
+        log.warning("Could not fetch SPY bars for regime (%s). Continuing without.", e)
+        return None
+
+    bars = [b for b in bars if getattr(b, "close", None)]
+    bars.sort(key=lambda b: b.timestamp)
+    if len(bars) < 25:
+        log.warning("Too few SPY bars (%d) to build regime. Continuing without.", len(bars))
+        return None
+
+    closes = [b.close for b in bars]
+    dates = [b.timestamp.date() for b in bars]
+    by_date: dict = {}
+    for i in range(len(bars)):
+        if i < 20:
+            continue
+        sma20 = sum(closes[i - 19:i + 1]) / 20.0
+        trend = (closes[i] - sma20) / sma20 if sma20 else 0.0
+        mom5 = (closes[i] / closes[i - 5] - 1.0) if closes[i - 5] else 0.0
+        rets = [closes[j] / closes[j - 1] - 1.0
+                for j in range(i - 9, i + 1) if closes[j - 1]]
+        vol = statistics.pstdev(rets) if len(rets) > 1 else 0.0
+        by_date[dates[i]] = (trend, mom5, vol)
+
+    log.info("Built SPY regime for %d sessions.", len(by_date))
+    return RegimeLookup(by_date) if by_date else None
+
+
 # ── Load labeled picks from Supabase ──────────────────────────────────────────
 
 def _connect():
@@ -103,11 +174,7 @@ def _connect():
 
 
 def load_labeled_picks(days: Optional[int] = None, conn=None) -> List[LabeledPick]:
-    """
-    Read every pick with a resolved fib_hit label from Postgres/Supabase.
-
-    days: if given, only include picks whose trade_date is within the last N days.
-    """
+    """Read every pick with a resolved fib_hit label from Postgres/Supabase."""
     import json
 
     own = conn is None
@@ -120,7 +187,8 @@ def load_labeled_picks(days: Optional[int] = None, conn=None) -> List[LabeledPic
         if days:
             where += " AND trade_date >= (CURRENT_DATE - %s::int)"
             params.append(int(days))
-        sql = (f"SELECT direction, signals, fib_hit, trade_date, et_time "
+        sql = (f"SELECT direction, signals, fib_hit, trade_date, et_time, "
+               f"conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price "
                f"FROM picks {where} "
                f"ORDER BY trade_date, et_time, id")
         with conn.cursor() as cur:
@@ -131,119 +199,198 @@ def load_labeled_picks(days: Optional[int] = None, conn=None) -> List[LabeledPic
             conn.close()
 
     picks: List[LabeledPick] = []
-    for direction, signals, fib_hit, trade_date, et_time in rows:
-        if isinstance(signals, str):          # jsonb usually arrives as dict already
+    for (direction, signals, fib_hit, trade_date, et_time,
+         conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price) in rows:
+        if isinstance(signals, str):
             try:
                 signals = json.loads(signals)
             except (ValueError, TypeError):
                 signals = {}
         picks.append(LabeledPick(
-            direction  = direction,
-            features   = _features_from_signals(signals or {}, direction),
-            hit        = 1 if fib_hit else 0,
-            trade_date = str(trade_date),
-            et_time    = et_time or "",
+            direction     = direction,
+            signals_feat  = _features_from_signals(signals or {}, direction),
+            hit           = 1 if fib_hit else 0,
+            trade_date    = trade_date if isinstance(trade_date, date) else None,
+            et_time       = et_time or "",
+            conviction    = float(conviction) if conviction is not None else 0.0,
+            mtf_aligned   = 1 if (mtf_aligned in (True, None)) else 0,
+            earnings_soon = 1 if earnings_soon else 0,
+            chg_pct       = float(chg_pct) if chg_pct is not None else 0.0,
+            atr_stop      = float(atr_stop) if atr_stop is not None else None,
+            price         = float(price) if price is not None else None,
         ))
     log.info("Loaded %d labeled picks from Supabase.", len(picks))
     return picks
+
+
+# ── Design matrix (signals + context + regime) ────────────────────────────────
+
+def _et_hour(et_time: str) -> float:
+    try:
+        return float(et_time.split(":")[0])
+    except (ValueError, AttributeError, IndexError):
+        return 12.0
+
+
+def build_design_matrix(
+    picks:           Sequence[LabeledPick],
+    regime:          Optional[RegimeLookup] = None,
+    include_context: bool = True,
+    include_regime:  bool = True,
+):
+    """Return (X, feature_names, n_signal_cols). Columns 0..9 are the signals."""
+    import numpy as np
+
+    reg_ok = include_regime and regime is not None
+    names: List[str] = list(SIG_NAMES)
+    if include_context:
+        names += CONTEXT_NAMES
+    if reg_ok:
+        names += REGIME_NAMES
+
+    rows: List[List[float]] = []
+    for p in picks:
+        row: List[float] = [float(v) for v in p.signals_feat]
+        if include_context:
+            atr_pct = 0.0
+            if p.atr_stop and p.price and p.price > 0:
+                atr_pct = abs(p.price - p.atr_stop) / p.price
+            row += [
+                p.conviction,
+                float(p.mtf_aligned),
+                float(p.earnings_soon),
+                _et_hour(p.et_time),
+                abs(p.chg_pct),
+                atr_pct,
+            ]
+        if reg_ok:
+            trend, mom, vol = regime.for_date(p.trade_date)
+            # direction-sign the directional pieces: positive = market favours trade
+            row += [trend * p.dir_sign, mom * p.dir_sign, vol]
+        rows.append(row)
+
+    X = np.asarray(rows, dtype=float)
+    return X, names, N_SIGNALS
 
 
 # ── Model fit ─────────────────────────────────────────────────────────────────
 
 @dataclass
 class FitResult:
-    coefs:      List[float]
-    intercept:  float
-    n_samples:  int
-    n_hits:     int
-    n_misses:   int
-    train_acc:  float
-    test_acc:   Optional[float]
-    test_auc:   Optional[float]
-    n_train:    int
-    n_test:     int
+    feature_names: List[str]
+    coefs:         List[float]
+    intercept:     float
+    n_signal_cols: int
+    n_samples:     int
+    n_hits:        int
+    n_misses:      int
+    train_acc:     float
+    test_acc:      Optional[float]
+    test_auc:      Optional[float]
+    n_train:       int
+    n_test:        int
+
+    @property
+    def signal_coefs(self) -> List[float]:
+        return self.coefs[:self.n_signal_cols]
+
+    @property
+    def context_coefs(self) -> List[Tuple[str, float]]:
+        return list(zip(self.feature_names[self.n_signal_cols:],
+                        self.coefs[self.n_signal_cols:]))
+
+
+def _zscore_params(block):
+    import numpy as np
+    mean = block.mean(axis=0)
+    std = block.std(axis=0)
+    std = np.where(std == 0, 1.0, std)
+    return mean, std
 
 
 def fit_logreg(
-    picks:     Sequence[LabeledPick],
-    C:         float = 1.0,
-    test_frac: float = 0.3,
+    X,
+    y,
+    feature_names: List[str],
+    n_signal_cols: int = N_SIGNALS,
+    C:             float = 1.0,
+    test_frac:     float = 0.3,
 ) -> FitResult:
     """
-    Fit L2 logistic regression predicting hit (1) vs miss (0) from the aligned
-    signal vector. Returns coefficients plus a walk-forward test score.
+    Fit L2 logistic regression predicting hit (1) vs miss (0). Context columns
+    (index >= n_signal_cols) are standardised; the 10 signal columns are left as
+    raw +1/-1/0 so their coefficients map cleanly onto conviction weights.
     """
     import numpy as np
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import accuracy_score, roc_auc_score
 
-    X = np.asarray([p.features for p in picks], dtype=float)
-    y = np.asarray([p.hit for p in picks], dtype=int)
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=int)
     n = int(len(y))
     n_hits = int(y.sum())
     n_misses = n - n_hits
+    has_context = X.shape[1] > n_signal_cols
 
-    def _new_model() -> "LogisticRegression":
-        return LogisticRegression(
-            penalty="l2", C=C, class_weight="balanced",
-            solver="liblinear", max_iter=1000,
-        )
+    def _std_apply(Xtr, Xte):
+        if not has_context:
+            return Xtr, Xte
+        mean, std = _zscore_params(Xtr[:, n_signal_cols:])
+        Xtr = Xtr.copy(); Xte = Xte.copy()
+        Xtr[:, n_signal_cols:] = (Xtr[:, n_signal_cols:] - mean) / std
+        Xte[:, n_signal_cols:] = (Xte[:, n_signal_cols:] - mean) / std
+        return Xtr, Xte
 
-    # Walk-forward evaluation: train on older picks, test on newer ones.
-    test_acc: Optional[float] = None
-    test_auc: Optional[float] = None
-    n_train = n
-    n_test = 0
+    def _model():
+        return LogisticRegression(penalty="l2", C=C, class_weight="balanced",
+                                  solver="liblinear", max_iter=1000)
+
+    # Walk-forward evaluation: older picks train, newer picks test.
+    test_acc = test_auc = None
+    n_train, n_test = n, 0
     if n >= 20 and 0.0 < test_frac < 1.0 and n_hits > 0 and n_misses > 0:
         split = int(round(n * (1.0 - test_frac)))
         Xtr, Xte = X[:split], X[split:]
         ytr, yte = y[:split], y[split:]
         if len(set(ytr.tolist())) == 2 and len(yte) > 0:
-            m = _new_model()
-            m.fit(Xtr, ytr)
+            Xtr_s, Xte_s = _std_apply(Xtr, Xte)
+            m = _model()
+            m.fit(Xtr_s, ytr)
             n_train, n_test = int(len(ytr)), int(len(yte))
-            test_acc = float(accuracy_score(yte, m.predict(Xte)))
+            test_acc = float(accuracy_score(yte, m.predict(Xte_s)))
             if len(set(yte.tolist())) == 2:
-                test_auc = float(roc_auc_score(yte, m.predict_proba(Xte)[:, 1]))
+                test_auc = float(roc_auc_score(yte, m.predict_proba(Xte_s)[:, 1]))
 
-    # Final model on ALL labeled data — this is what the shipped weights come from.
-    model = _new_model()
-    model.fit(X, y)
+    # Final model on ALL data — this is where the shipped weights come from.
+    X_all, _ = _std_apply(X, X)
+    model = _model()
+    model.fit(X_all, y)
     coefs = [float(c) for c in model.coef_[0]]
-    train_acc = float(accuracy_score(y, model.predict(X)))
+    train_acc = float(accuracy_score(y, model.predict(X_all)))
 
     return FitResult(
-        coefs=coefs, intercept=float(model.intercept_[0]),
-        n_samples=n, n_hits=n_hits, n_misses=n_misses,
-        train_acc=train_acc, test_acc=test_acc, test_auc=test_auc,
-        n_train=n_train, n_test=n_test,
+        feature_names=list(feature_names), coefs=coefs,
+        intercept=float(model.intercept_[0]), n_signal_cols=n_signal_cols,
+        n_samples=n, n_hits=n_hits, n_misses=n_misses, train_acc=train_acc,
+        test_acc=test_acc, test_auc=test_auc, n_train=n_train, n_test=n_test,
     )
 
 
 # ── Coefficients → conviction weights ─────────────────────────────────────────
 
 def coefs_to_weights(
-    coefs:      Sequence[float],
-    min_weight: float = 0.5,
-    max_weight: float = 2.0,
+    signal_coefs: Sequence[float],
+    min_weight:   float = 0.5,
+    max_weight:   float = 2.0,
 ) -> List[float]:
-    """
-    Map learned coefficients onto the conviction weight range.
-
-    Highest-coefficient signal → max_weight, lowest → min_weight, linear between.
-    Keeps the same scale/convention as the existing hand-tuned weights so the
-    rest of the pipeline (conviction %, grades, trade gates) is unaffected.
-    """
-    coefs = list(coefs)
+    """Map the 10 signal coefficients onto the conviction weight range."""
+    coefs = list(signal_coefs)
     if not coefs:
         return list(CURRENT_WEIGHTS)
     min_c, max_c = min(coefs), max(coefs)
     rng = (max_c - min_c) or 1.0
-    weights = []
-    for c in coefs:
-        norm = (c - min_c) / rng
-        weights.append(round(min_weight + norm * (max_weight - min_weight), 2))
-    return weights
+    return [round(min_weight + (c - min_c) / rng * (max_weight - min_weight), 2)
+            for c in coefs]
 
 
 # ── Report ────────────────────────────────────────────────────────────────────
@@ -253,16 +400,19 @@ def print_report(fit: FitResult, new_weights: List[float]) -> None:
     print(f"\n{bar}")
     print("LOGISTIC-REGRESSION CONVICTION WEIGHT LEARNING")
     print(bar)
-    print(f"\nLabeled picks : {fit.n_samples}  "
-          f"({fit.n_hits} hits / {fit.n_misses} misses, "
-          f"base hit-rate {100 * fit.n_hits / fit.n_samples:.1f}%)"
-          if fit.n_samples else "\nLabeled picks : 0")
+    if fit.n_samples:
+        base = 100 * fit.n_hits / fit.n_samples
+        print(f"\nLabeled picks : {fit.n_samples}  "
+              f"({fit.n_hits} hits / {fit.n_misses} misses, base {base:.1f}%)")
+    else:
+        print("\nLabeled picks : 0")
+    n_ctx = len(fit.feature_names) - fit.n_signal_cols
+    print(f"Features      : {fit.n_signal_cols} signals + {n_ctx} context/regime")
     print(f"Train accuracy: {fit.train_acc * 100:.1f}%  (in-sample, all data)")
     if fit.test_acc is not None:
         auc = f"{fit.test_auc:.3f}" if fit.test_auc is not None else "n/a"
-        print(f"Walk-forward  : test acc {fit.test_acc * 100:.1f}%  "
-              f"AUC {auc}  ({fit.n_train} train → {fit.n_test} test, "
-              f"time-ordered)")
+        print(f"Walk-forward  : test acc {fit.test_acc * 100:.1f}%  AUC {auc}  "
+              f"({fit.n_train} train → {fit.n_test} test, time-ordered)")
     else:
         print("Walk-forward  : skipped (need >=20 picks with both hits & misses)")
 
@@ -270,10 +420,17 @@ def print_report(fit: FitResult, new_weights: List[float]) -> None:
           f"{'NewWeight':>10} {'Change':>9}")
     print("-" * 74)
     for i, name in enumerate(SIG_NAMES):
-        coef = fit.coefs[i] if i < len(fit.coefs) else 0.0
+        coef = fit.signal_coefs[i] if i < len(fit.signal_coefs) else 0.0
         ow = CURRENT_WEIGHTS[i] if i < len(CURRENT_WEIGHTS) else 1.0
         nw = new_weights[i] if i < len(new_weights) else ow
         print(f"{name:<10} {coef:>+9.4f} {ow:>10.2f} {nw:>10.2f} {nw - ow:>+9.2f}")
+
+    if fit.context_coefs:
+        print(f"\n{'Context/regime':<16} {'Coef':>9}   (insight only — not written to weights)")
+        print("-" * 74)
+        for name, coef in sorted(fit.context_coefs, key=lambda x: -abs(x[1])):
+            arrow = "↑ helps" if coef > 0 else "↓ hurts" if coef < 0 else "—"
+            print(f"{name:<16} {coef:>+9.4f}   {arrow}")
 
     print(f"\n{bar}")
     print("NEW WEIGHTS — paste into signals/conviction.py (or re-run with --apply):")
@@ -289,21 +446,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     parser = argparse.ArgumentParser(
-        description="Learn conviction weights from labeled Supabase picks "
-                    "using L2 logistic regression.",
+        description="Learn conviction weights from labeled Supabase picks using "
+                    "L2 logistic regression with market-regime + context features.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python -m backtest.logistic_tuner
   python -m backtest.logistic_tuner --days 30
   python -m backtest.logistic_tuner --apply
-  python -m backtest.logistic_tuner --days 60 --min-samples 40 --apply
+  python -m backtest.logistic_tuner --no-regime --days 60 --apply
         """,
     )
     parser.add_argument("--days", type=int, default=None,
                         help="Only use picks from the last N days (default: all)")
     parser.add_argument("--apply", action="store_true",
-                        help="Write learned weights into signals/conviction.py")
+                        help="Write learned signal weights into signals/conviction.py")
     parser.add_argument("--min-samples", type=int, default=30,
                         help="Minimum labeled picks required to trust the fit")
     parser.add_argument("--min-weight", type=float, default=0.5)
@@ -312,6 +469,10 @@ Examples:
                         help="Inverse L2 strength (smaller = more regularisation)")
     parser.add_argument("--test-frac", type=float, default=0.3,
                         help="Fraction of newest picks held out for walk-forward test")
+    parser.add_argument("--no-context", action="store_true",
+                        help="Drop the picks-context features")
+    parser.add_argument("--no-regime", action="store_true",
+                        help="Skip SPY market-regime features (avoids network fetch)")
     args = parser.parse_args(argv)
 
     try:
@@ -338,8 +499,17 @@ Examples:
               f"class yet. Keeping current weights.")
         return 1
 
-    fit = fit_logreg(picks, C=args.C, test_frac=args.test_frac)
-    new_weights = coefs_to_weights(fit.coefs,
+    regime = None if args.no_regime else load_spy_regime()
+    X, names, n_sig = build_design_matrix(
+        picks, regime=regime,
+        include_context=not args.no_context,
+        include_regime=not args.no_regime,
+    )
+    y = [p.hit for p in picks]
+
+    fit = fit_logreg(X, y, names, n_signal_cols=n_sig,
+                     C=args.C, test_frac=args.test_frac)
+    new_weights = coefs_to_weights(fit.signal_coefs,
                                    min_weight=args.min_weight,
                                    max_weight=args.max_weight)
     print_report(fit, new_weights)
