@@ -1,16 +1,29 @@
-import { getTodayPicks, groupByScan, topConvictionByHour } from "@/lib/queries";
+import {
+  getTodayPicks,
+  groupByScan,
+  topConvictionByHour,
+  getFibHitStats,
+  getEtTodayDateString,
+  isPastFibValidationTime,
+} from "@/lib/queries";
 import ScanSection from "@/components/ScanSection";
 import ConvictionChart from "@/components/ConvictionChart";
-import type { PickRow } from "@/lib/types";
+import FibHitSummary from "@/components/FibHitSummary";
+import type { PickRow, FibHitStats } from "@/lib/types";
 
 // Always fetch fresh; new scans land hourly.
 export const revalidate = 60;
 
 export default async function TodayPage() {
   let picks: PickRow[] = [];
+  let fibStats: FibHitStats | null = null;
   let err: string | null = null;
+  const todayEt = getEtTodayDateString();
   try {
     picks = await getTodayPicks();
+    if (isPastFibValidationTime(todayEt)) {
+      fibStats = await getFibHitStats(todayEt);
+    }
   } catch (e) {
     err = e instanceof Error ? e.message : String(e);
   }
@@ -64,6 +77,8 @@ export default async function TodayPage() {
         </div>
       ) : (
         <>
+          {fibStats && <FibHitSummary stats={fibStats} label="today" />}
+
           <div className="stats-row">
             <div className="stat-card">
               <div className="stat-label">Scans Today</div>

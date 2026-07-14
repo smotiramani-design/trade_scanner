@@ -137,6 +137,10 @@ SELECT
     p.mtf_aligned,
     p.earnings_soon,
     p.verdict,
+    p.analysis,
+    p.key_signals,
+    p.conflicting,
+    p.signals,
     s.universe,
     s.trade_run,
     s.run_ts,
@@ -167,3 +171,99 @@ DROP POLICY IF EXISTS "anon_read_trades" ON trades;
 CREATE POLICY "anon_read_scans"  ON scans  FOR SELECT TO anon USING (true);
 CREATE POLICY "anon_read_picks"  ON picks  FOR SELECT TO anon USING (true);
 CREATE POLICY "anon_read_trades" ON trades FOR SELECT TO anon USING (true);
+
+-- ── Pre-Market Momentum Screener (daily 9:15 AM ET) ─────────────────────────
+CREATE TABLE IF NOT EXISTS momentum_scans (
+    id          BIGSERIAL PRIMARY KEY,
+    run_ts      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    trade_date  DATE,
+    et_time     TEXT,
+    et_hour     INT,
+    session     TEXT,
+    universe    TEXT,
+    n_results   INT,
+    n_trade     INT,
+    n_watch     INT,
+    n_skip      INT
+);
+
+CREATE TABLE IF NOT EXISTS momentum_picks (
+    id              BIGSERIAL PRIMARY KEY,
+    scan_id         BIGINT NOT NULL REFERENCES momentum_scans(id) ON DELETE CASCADE,
+    trade_date      DATE,
+    et_time         TEXT,
+    ticker          TEXT NOT NULL,
+    company         TEXT,
+    sector          TEXT,
+    tier            TEXT,           -- TRADE / WATCH / SKIP
+    rank            INT,             -- 1-based within TRADE tier
+    score           INT,             -- 0–5 signal score
+    conviction      NUMERIC,         -- 0–88 sub-rank (TRADE tier only)
+    session         TEXT,
+    pm_change_pct   NUMERIC,
+    pm_volume       BIGINT,
+    pm_price        NUMERIC,
+    prev_close      NUMERIC,
+    gap_pct         NUMERIC,
+    l1_catalyst     TEXT,
+    l2_volume       TEXT,
+    l3_price        TEXT,
+    l4_rs           TEXT,
+    l5_options      TEXT,
+    data_sources    TEXT,
+    raw_signals     JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_momentum_scans_run_ts   ON momentum_scans (run_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_momentum_scans_day      ON momentum_scans (trade_date DESC);
+CREATE INDEX IF NOT EXISTS idx_momentum_picks_scan_id  ON momentum_picks (scan_id);
+CREATE INDEX IF NOT EXISTS idx_momentum_picks_day      ON momentum_picks (trade_date DESC, tier, rank);
+
+DROP VIEW IF EXISTS v_today_momentum_picks;
+DROP VIEW IF EXISTS v_momentum_picks;
+
+CREATE VIEW v_momentum_picks AS
+SELECT
+    s.trade_date,
+    s.et_time,
+    s.et_hour,
+    s.session,
+    s.universe,
+    s.run_ts,
+    p.scan_id,
+    p.ticker,
+    p.company,
+    p.sector,
+    p.tier,
+    p.rank,
+    p.score,
+    p.conviction,
+    p.pm_change_pct,
+    p.pm_volume,
+    p.pm_price,
+    p.prev_close,
+    p.gap_pct,
+    p.l1_catalyst,
+    p.l2_volume,
+    p.l3_price,
+    p.l4_rs,
+    p.l5_options,
+    p.data_sources
+FROM momentum_picks p
+JOIN momentum_scans s ON s.id = p.scan_id
+ORDER BY s.run_ts DESC, p.tier, p.rank NULLS LAST, p.conviction DESC NULLS LAST;
+
+CREATE VIEW v_today_momentum_picks AS
+SELECT * FROM v_momentum_picks
+WHERE trade_date = (now() AT TIME ZONE 'America/New_York')::date;
+
+GRANT SELECT ON momentum_scans, momentum_picks TO anon, authenticated;
+GRANT SELECT ON v_momentum_picks, v_today_momentum_picks TO anon, authenticated;
+
+ALTER TABLE momentum_scans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE momentum_picks ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "anon_read_momentum_scans" ON momentum_scans;
+DROP POLICY IF EXISTS "anon_read_momentum_picks" ON momentum_picks;
+CREATE POLICY "anon_read_momentum_scans" ON momentum_scans FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_read_momentum_picks" ON momentum_picks FOR SELECT TO anon USING (true);

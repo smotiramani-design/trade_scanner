@@ -74,12 +74,14 @@ log = logging.getLogger(__name__)
 
 
 def _run_kind(now_et: datetime) -> str:
-    """Return 'fib' | 'scan' | 'skip' based on ET clock (top of hour only)."""
-    if now_et.minute != 0:
-        return "skip"
+    """Return 'fib' | 'scan' | 'skip' based on ET clock."""
     h = now_et.hour
-    if h == FIB_VALIDATION_HOUR:
+    m = now_et.minute
+    # 4 PM fib job — allow first 10 min (cold starts often miss exactly :00)
+    if h == FIB_VALIDATION_HOUR and m < 10:
         return "fib"
+    if m != 0:
+        return "skip"
     if SCAN_START_HOUR <= h <= SCAN_END_HOUR:
         return "scan"
     return "skip"

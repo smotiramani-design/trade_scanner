@@ -27,26 +27,26 @@ export default function ConvictionChart({ data }: { data: Point[] }) {
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 8, right: 16, bottom: 4, left: -8 }}>
-        <CartesianGrid stroke="#30363D" strokeDasharray="3 3" vertical={false} />
+        <CartesianGrid stroke="#2a2a2a" strokeDasharray="3 3" vertical={false} />
         <XAxis
           dataKey="et_time"
-          stroke="#7D8590"
+          stroke="#8a8a8a"
           tick={{ fontSize: 11, fontFamily: "IBM Plex Mono, monospace" }}
         />
         <YAxis
           domain={[0, 100]}
-          stroke="#7D8590"
+          stroke="#8a8a8a"
           tick={{ fontSize: 11, fontFamily: "IBM Plex Mono, monospace" }}
           width={40}
         />
         <Tooltip
           contentStyle={{
-            background: "#161B22",
-            border: "1px solid #30363D",
+            background: "#0a0a0a",
+            border: "1px solid #2a2a2a",
             borderRadius: 8,
             fontSize: 12,
           }}
-          labelStyle={{ color: "#E6EDF3" }}
+          labelStyle={{ color: "#f0f0f0" }}
           formatter={(v: number) => [`${v.toFixed(0)}%`, "Top conviction"]}
         />
         <Line
