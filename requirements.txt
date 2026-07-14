@@ -5,6 +5,14 @@ pandas>=2.1.0                 # DataFrame operations (yfinance dependency)
 numpy>=1.26.0                 # Numerical computation
 yfinance>=0.2.36,<0.3        # Yahoo Finance OHLCV bars (fallback + backtesting); pin to 0.2.x (1.x changed API)
 
+# ── Machine learning (conviction weight learning) ─────────────────────────────
+# Used by backtest/logistic_tuner.py to learn signal weights from labeled picks.
+scikit-learn>=1.4.0          # L2 logistic regression over the 10-signal vector
+
+# ── Database driver (Supabase / Postgres) ─────────────────────────────────────
+# Needed to read labeled picks for weight learning and to write scan results.
+psycopg[binary]>=3.1.0       # Postgres driver (v3)
+
 # ── Timezone handling ─────────────────────────────────────────────────────────
 # pytz is a fallback for Python < 3.9 where zoneinfo is unavailable.
 # Python 3.11 (required) has zoneinfo in stdlib — pytz kept for compatibility.

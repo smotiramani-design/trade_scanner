@@ -19,6 +19,13 @@ const SECTIONS = [
       { href: "/momentum/history", label: "Historical Scans" },
     ],
   },
+  {
+    label: "Machine Learning",
+    links: [
+      { href: "/ml", label: "Model Weights" },
+      { href: "/ml/data", label: "Training Data" },
+    ],
+  },
 ];
 
 function isActive(pathname: string, href: string) {
@@ -27,6 +34,7 @@ function isActive(pathname: string, href: string) {
   if (href === "/momentum/history") {
     return pathname === "/momentum/history" || pathname.startsWith("/momentum/history/");
   }
+  if (href === "/ml") return pathname === "/ml";
   return pathname.startsWith(href);
 }
 

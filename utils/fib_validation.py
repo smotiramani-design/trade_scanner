@@ -201,3 +201,88 @@ def validate_today_fib_hits(trade_date=None) -> dict:
     }
     log.info("Fib validation done: %s", summary)
     return summary
+
+
+def validate_today_feature_hits(trade_date=None, limit: int = 0) -> dict:
+    """
+    ENH-ML-02: label the full scanned universe (scan_features) with fib_hit.
+
+    Identical Fib-hit definition as picks, but applied to every scanned ticker
+    with a fib_target — including the ones the scanner rejected. This is what
+    de-biases the ML training set. Runs at 4 PM ET alongside pick validation.
+
+    limit: cap the number of rows validated per day (0 = no cap). Useful to
+    bound the intraday bar fetches on very large universes.
+    """
+    if not config.DB_ENABLED:
+        log.warning("DB disabled — skipping feature validation.")
+        return {"status": "skipped", "reason": "db_disabled"}
+
+    if trade_date is None:
+        trade_date = datetime.now(ET).date()
+
+    from utils.db_writer import init_db
+
+    conn = _connect()
+    bar_cache: Dict[str, List] = {}
+    validated = hits = misses = unknown = 0
+
+    try:
+        init_db(conn)
+        limit_sql = " LIMIT %s" if limit and limit > 0 else ""
+        params = [trade_date] + ([limit] if limit_sql else [])
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT f.id, f.ticker, f.direction, f.fib_target, s.run_ts
+                FROM scan_features f
+                JOIN scans s ON s.id = f.scan_id
+                WHERE f.trade_date = %s
+                  AND f.fib_target IS NOT NULL
+                  AND f.fib_hit IS NULL
+                  AND f.direction IN ('bull', 'bear')
+                ORDER BY s.run_ts, f.id{limit_sql}
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+
+        for feat_id, ticker, direction, fib_target, run_ts in rows:
+            target = float(fib_target)
+            start_et = run_ts.astimezone(ET) if run_ts.tzinfo else run_ts.replace(tzinfo=ET)
+            end_et = _parse_window_end(start_et)
+
+            hi, lo = _fetch_window_extremes(ticker, start_et, end_et, bar_cache)
+            hit = _hit(direction, target, hi, lo)
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE scan_features
+                       SET fib_hit = %s, fib_window_high = %s, fib_window_low = %s,
+                           fib_validated_at = now()
+                       WHERE id = %s""",
+                    (hit, hi, lo, feat_id),
+                )
+            conn.commit()
+
+            validated += 1
+            if hit is True:
+                hits += 1
+            elif hit is False:
+                misses += 1
+            else:
+                unknown += 1
+
+    finally:
+        conn.close()
+
+    summary = {
+        "status": "ok",
+        "trade_date": str(trade_date),
+        "validated": validated,
+        "hits": hits,
+        "misses": misses,
+        "unknown": unknown,
+    }
+    log.info("Feature validation done: %s", summary)
+    return summary

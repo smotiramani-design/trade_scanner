@@ -113,3 +113,8 @@ GREEKS_ENABLED:          bool  = _bool("GREEKS_ENABLED", False)         # ENH-20
 # Example: postgresql://postgres:[PASSWORD]@db.<ref>.supabase.co:5432/postgres
 DATABASE_URL: str  = _get("DATABASE_URL", "")
 DB_ENABLED:   bool = _bool("DB_ENABLED", bool(DATABASE_URL))   # auto-on when a URL is set
+
+# ENH-ML-02: log the FULL scanned universe (not just top picks) to scan_features.
+# This is the de-biased training set for the conviction-weight learner. On by
+# default when the DB is enabled; set LOG_UNIVERSE=false to store picks only.
+LOG_UNIVERSE: bool = _bool("LOG_UNIVERSE", True)

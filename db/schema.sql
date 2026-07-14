@@ -267,3 +267,84 @@ DROP POLICY IF EXISTS "anon_read_momentum_scans" ON momentum_scans;
 DROP POLICY IF EXISTS "anon_read_momentum_picks" ON momentum_picks;
 CREATE POLICY "anon_read_momentum_scans" ON momentum_scans FOR SELECT TO anon USING (true);
 CREATE POLICY "anon_read_momentum_picks" ON momentum_picks FOR SELECT TO anon USING (true);
+
+-- ── ML: full-universe feature log (selection-bias fix, ENH-ML-02) ─────────────
+-- One row per scanned ticker per scan (NOT just the top picks). This is the
+-- de-biased training set for the conviction-weight learner: it also records the
+-- tickers the scanner rejected, so the model can learn what separates good
+-- setups from bad ones. Labeled end-of-day with the same Fib-hit definition used
+-- for picks. `was_pick` flags whether the ticker made the surfaced top-N.
+CREATE TABLE IF NOT EXISTS scan_features (
+    id               BIGSERIAL PRIMARY KEY,
+    scan_id          BIGINT NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+    trade_date       DATE,
+    et_time          TEXT,
+    ticker           TEXT NOT NULL,
+    company          TEXT,
+    sector           TEXT,
+    direction        TEXT,        -- bull / bear / neutral (this ticker's own bias)
+    was_pick         BOOLEAN NOT NULL DEFAULT FALSE,  -- made the surfaced top-N?
+    net_score        INT,
+    conviction       NUMERIC,     -- conviction % (0–100)
+    weighted_score   NUMERIC,
+    grade            TEXT,
+    price            NUMERIC,
+    chg_pct          NUMERIC,
+    mtf_aligned      BOOLEAN,
+    earnings_soon    BOOLEAN,
+    atr_stop         NUMERIC,
+    fib_target       NUMERIC,     -- next-hour Fibonacci target
+    fib_label        TEXT,
+    signals          JSONB,       -- {"Candle": {"bias": "bull", "label": "..."}, ...}
+    fib_hit          BOOLEAN,     -- set EOD: did price hit target within 1 hr?
+    fib_window_high  NUMERIC,
+    fib_window_low   NUMERIC,
+    fib_validated_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_features_scan_id ON scan_features (scan_id);
+CREATE INDEX IF NOT EXISTS idx_scan_features_day     ON scan_features (trade_date DESC, direction);
+CREATE INDEX IF NOT EXISTS idx_scan_features_label   ON scan_features (trade_date DESC)
+    WHERE fib_target IS NOT NULL AND fib_hit IS NULL;
+
+-- ── ML: weight-tuning run history (ENH-ML-03) ─────────────────────────────────
+-- One row per `python -m backtest.logistic_tuner` run. Powers the dashboard's
+-- Machine Learning tab: learned weights, model metrics, and the context/regime
+-- coefficients the model used.
+CREATE TABLE IF NOT EXISTS ml_weight_runs (
+    id             BIGSERIAL PRIMARY KEY,
+    run_ts         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    trade_date     DATE,
+    et_time        TEXT,
+    source         TEXT,          -- "features" (de-biased) | "picks"
+    lookback_days  INT,           -- NULL = all history
+    n_samples      INT,
+    n_hits         INT,
+    n_misses       INT,
+    base_rate      NUMERIC,       -- hit rate of the training set (%)
+    train_acc      NUMERIC,       -- in-sample accuracy (%)
+    test_acc       NUMERIC,       -- walk-forward test accuracy (%)
+    test_auc       NUMERIC,       -- walk-forward AUC
+    n_train        INT,
+    n_test         INT,
+    use_regime     BOOLEAN,
+    use_context    BOOLEAN,
+    c_param        NUMERIC,       -- inverse L2 strength
+    applied        BOOLEAN NOT NULL DEFAULT FALSE,  -- written to conviction.py?
+    weights        JSONB,         -- [{"signal","old","new","coef"}, ...]
+    context_coefs  JSONB,         -- [{"name","coef"}, ...]
+    selection_bias JSONB          -- {"pick_hit_rate","nonpick_hit_rate","n_pick","n_nonpick"}
+);
+
+CREATE INDEX IF NOT EXISTS idx_ml_weight_runs_ts ON ml_weight_runs (run_ts DESC);
+
+-- Dashboard read access (anon)
+GRANT SELECT ON scan_features, ml_weight_runs TO anon, authenticated;
+
+ALTER TABLE scan_features  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ml_weight_runs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "anon_read_scan_features"  ON scan_features;
+DROP POLICY IF EXISTS "anon_read_ml_weight_runs" ON ml_weight_runs;
+CREATE POLICY "anon_read_scan_features"  ON scan_features  FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_read_ml_weight_runs" ON ml_weight_runs FOR SELECT TO anon USING (true);
