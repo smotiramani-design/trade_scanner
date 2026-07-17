@@ -55,6 +55,12 @@ Usage:
 --save-db writes the run (weights, metrics, coefficients) to ml_weight_runs so the
 dashboard's Machine Learning tab can display it.
 
+--apply also serializes the trained model to models/phit_model.json (or pass
+--save-model without --apply). At scan time signals/phit.py loads that artifact and
+ranks the surfaced picks by the model's predicted probability of hitting the Fib
+target — using the FULL model (signals + context + regime), not just the 10 signal
+weights. This is the "rank by P(hit)" step the weight-mapping was a stepping stone to.
+
 Requires DATABASE_URL set and scikit-learn + psycopg installed (requirements.txt).
 Market regime fetches SPY daily bars (needs network); use --no-regime to skip.
 
@@ -84,6 +90,11 @@ N_SIGNALS = len(SIG_NAMES)
 
 CONTEXT_NAMES = ["conviction", "mtf_align", "earnings", "et_hour", "abs_chg", "atr_pct"]
 REGIME_NAMES = ["mkt_trend", "mkt_mom", "mkt_vol"]
+
+# Where the serialized P(hit) model lives. Read at scan time by signals/phit.py to
+# rank picks by predicted probability. Plain JSON (no pickle) so it's safe,
+# versionable, and needs no sklearn/numpy to load or predict.
+MODEL_PATH = Path(__file__).parent.parent / "models" / "phit_model.json"
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -294,6 +305,49 @@ def _et_hour(et_time: str) -> float:
         return 12.0
 
 
+def feature_names(include_context: bool = True, include_regime: bool = True) -> List[str]:
+    """The design-matrix column names for a given feature configuration."""
+    names: List[str] = list(SIG_NAMES)
+    if include_context:
+        names += CONTEXT_NAMES
+    if include_regime:
+        names += REGIME_NAMES
+    return names
+
+
+def row_for_pick(
+    p:               LabeledPick,
+    regime_tuple:    Optional[Tuple[float, float, float]],
+    include_context: bool = True,
+    include_regime:  bool = True,
+) -> List[float]:
+    """
+    Build one design-matrix row (pure Python — no numpy).
+
+    Shared by training (build_design_matrix) and live inference (signals/phit.py)
+    so the two can never drift. regime_tuple is the (trend, mom, vol) for this
+    pick's day; pass None to omit the regime block.
+    """
+    row: List[float] = [float(v) for v in p.signals_feat]
+    if include_context:
+        atr_pct = 0.0
+        if p.atr_stop and p.price and p.price > 0:
+            atr_pct = abs(p.price - p.atr_stop) / p.price
+        row += [
+            p.conviction,
+            float(p.mtf_aligned),
+            float(p.earnings_soon),
+            _et_hour(p.et_time),
+            abs(p.chg_pct),
+            atr_pct,
+        ]
+    if include_regime and regime_tuple is not None:
+        trend, mom, vol = regime_tuple
+        # direction-sign the directional pieces: positive = market favours trade
+        row += [trend * p.dir_sign, mom * p.dir_sign, vol]
+    return row
+
+
 def build_design_matrix(
     picks:           Sequence[LabeledPick],
     regime:          Optional[RegimeLookup] = None,
@@ -304,32 +358,14 @@ def build_design_matrix(
     import numpy as np
 
     reg_ok = include_regime and regime is not None
-    names: List[str] = list(SIG_NAMES)
-    if include_context:
-        names += CONTEXT_NAMES
-    if reg_ok:
-        names += REGIME_NAMES
+    names = feature_names(include_context=include_context, include_regime=reg_ok)
 
     rows: List[List[float]] = []
     for p in picks:
-        row: List[float] = [float(v) for v in p.signals_feat]
-        if include_context:
-            atr_pct = 0.0
-            if p.atr_stop and p.price and p.price > 0:
-                atr_pct = abs(p.price - p.atr_stop) / p.price
-            row += [
-                p.conviction,
-                float(p.mtf_aligned),
-                float(p.earnings_soon),
-                _et_hour(p.et_time),
-                abs(p.chg_pct),
-                atr_pct,
-            ]
-        if reg_ok:
-            trend, mom, vol = regime.for_date(p.trade_date)
-            # direction-sign the directional pieces: positive = market favours trade
-            row += [trend * p.dir_sign, mom * p.dir_sign, vol]
-        rows.append(row)
+        reg_tuple = regime.for_date(p.trade_date) if reg_ok else None
+        rows.append(row_for_pick(p, reg_tuple,
+                                 include_context=include_context,
+                                 include_regime=reg_ok))
 
     X = np.asarray(rows, dtype=float)
     return X, names, N_SIGNALS
@@ -351,6 +387,10 @@ class FitResult:
     test_auc:      Optional[float]
     n_train:       int
     n_test:        int
+    # Full-data standardization for the context/regime columns (index >=
+    # n_signal_cols). Needed to reproduce predictions at inference time.
+    context_mean:  Optional[List[float]] = None
+    context_std:   Optional[List[float]] = None
 
     @property
     def signal_coefs(self) -> List[float]:
@@ -424,6 +464,11 @@ def fit_logreg(
                 test_auc = float(roc_auc_score(yte, m.predict_proba(Xte_s)[:, 1]))
 
     # Final model on ALL data — this is where the shipped weights come from.
+    # Capture the full-data context standardization so inference can reproduce it.
+    ctx_mean = ctx_std = None
+    if has_context:
+        m, s = _zscore_params(X[:, n_signal_cols:])
+        ctx_mean, ctx_std = m.tolist(), s.tolist()
     X_all, _ = _std_apply(X, X)
     model = _model()
     model.fit(X_all, y)
@@ -435,6 +480,7 @@ def fit_logreg(
         intercept=float(model.intercept_[0]), n_signal_cols=n_signal_cols,
         n_samples=n, n_hits=n_hits, n_misses=n_misses, train_acc=train_acc,
         test_acc=test_acc, test_auc=test_auc, n_train=n_train, n_test=n_test,
+        context_mean=ctx_mean, context_std=ctx_std,
     )
 
 
@@ -555,6 +601,53 @@ def save_run(
             conn.close()
 
 
+# ── Persist the trained model for live P(hit) scoring ─────────────────────────
+
+def save_model(
+    fit:             FitResult,
+    *,
+    source:          str,
+    include_context: bool,
+    include_regime:  bool,
+    path:            Optional[Path] = None,
+) -> Optional[Path]:
+    """
+    Serialize the full fitted model to JSON so the scanner can rank picks by
+    predicted P(hit). Stores coefficients, intercept, the exact feature layout,
+    and the context standardization params. Only the final all-data model is
+    saved (this is the one whose weights ship).
+    """
+    import json
+    from datetime import datetime, timezone
+
+    path = path or MODEL_PATH
+    base_rate = (fit.n_hits / fit.n_samples) if fit.n_samples else None
+    artifact = {
+        "version":         1,
+        "trained_at":      datetime.now(timezone.utc).isoformat(),
+        "source":          source,
+        "n_samples":       fit.n_samples,
+        "test_auc":        fit.test_auc,
+        "base_rate":       round(base_rate, 4) if base_rate is not None else None,
+        "feature_names":   fit.feature_names,
+        "n_signal_cols":   fit.n_signal_cols,
+        "coefs":           fit.coefs,
+        "intercept":       fit.intercept,
+        "context_mean":    fit.context_mean,
+        "context_std":     fit.context_std,
+        "include_context": include_context,
+        "include_regime":  include_regime,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(artifact, indent=2))
+        log.info("Saved P(hit) model to %s", path)
+        return path
+    except OSError:
+        log.exception("Failed to write P(hit) model artifact.")
+        return None
+
+
 # ── Report ────────────────────────────────────────────────────────────────────
 
 def print_report(fit: FitResult, new_weights: List[float],
@@ -637,6 +730,9 @@ Examples:
                         help="Write learned signal weights into signals/conviction.py")
     parser.add_argument("--save-db", action="store_true",
                         help="Persist this run to ml_weight_runs (for the dashboard)")
+    parser.add_argument("--save-model", action="store_true",
+                        help="Write the trained model to models/phit_model.json so the "
+                             "scanner ranks picks by predicted P(hit). Implied by --apply.")
     parser.add_argument("--min-samples", type=int, default=30,
                         help="Minimum labeled rows required to trust the fit")
     parser.add_argument("--min-weight", type=float, default=0.5)
@@ -701,6 +797,16 @@ Examples:
             applied = apply_weights(new_weights)
     else:
         print("Tip: re-run with --apply to write these weights to conviction.py.")
+
+    # Save the model for live P(hit) ranking whenever we applied (so weights and
+    # model stay in lockstep) or the user asked for it explicitly with --save-model.
+    if applied or args.save_model:
+        p = save_model(fit, source=source,
+                       include_context=not args.no_context,
+                       include_regime=not args.no_regime)
+        if p:
+            print(f"\n✓ P(hit) model saved to {p}")
+            print("  The scanner will now rank picks by predicted probability.")
 
     if args.save_db:
         save_run(fit, new_weights, source=source, days=args.days,

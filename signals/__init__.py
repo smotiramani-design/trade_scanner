@@ -1,12 +1,13 @@
 """
-signals/__init__.py — runs all 9 signals against a bar list.
+signals/__init__.py — runs all 10 signals against a bar list.
 
 Core signals (always run on OHLCV bars):
   candle, volume, sma, gaps, stochastics, cci, role_reversal
 
-Extended signals (ENH-09, ENH-12):
+Extended signals (ENH-09, ENH-12, ENH-18):
   relative_strength — requires spy_bars kwarg
   vwap              — uses mode kwarg (Hourly/Daily)
+  news_sentiment    — requires ticker kwarg
 """
 from typing import List, Optional
 

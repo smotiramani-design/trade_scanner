@@ -100,6 +100,7 @@ def _pick_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
         bool(getattr(ta, "earnings_soon", False)),
         float(atr) if atr else None,
         json.dumps(_signals_json(ta)),
+        cs.phit,
     )
 
 
@@ -123,12 +124,20 @@ def _feature_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
         float(atr) if atr else None,
         fib_t, fib_l,
         json.dumps(_signals_json(ta)),
+        cs.phit,
     )
 
 
 def _feature_rows(scan_id: int, results: Sequence[TickerAnalysis],
                   pick_tickers: set, trade_date, et_time: str) -> List[tuple]:
-    """Score every scanned ticker and build its scan_features row."""
+    """Score every scanned ticker (with P(hit)) and build its scan_features row."""
+    try:
+        from signals.phit import predict_phit, model_available
+        have_model = model_available()
+    except Exception:
+        predict_phit = None
+        have_model = False
+
     rows: List[tuple] = []
     for ta in results:
         try:
@@ -137,6 +146,12 @@ def _feature_rows(scan_id: int, results: Sequence[TickerAnalysis],
             log.debug("score_conviction failed for %s", getattr(ta, "ticker", "?"),
                       exc_info=True)
             continue
+        if have_model and cs.phit is None:
+            try:
+                cs.phit = predict_phit(ta, cs)
+            except Exception:
+                log.debug("predict_phit failed for %s", getattr(ta, "ticker", "?"),
+                          exc_info=True)
         rows.append(_feature_row(scan_id, ta, cs, ta.ticker in pick_tickers,
                                  trade_date, et_time))
     return rows
@@ -215,8 +230,8 @@ def write_scan(
                         direction, rank, price, chg_pct,
                         net_score, conviction, weighted_score, grade, verdict,
                         analysis, key_signals, conflicting, fib_target, fib_label,
-                        mtf_aligned, earnings_soon, atr_stop, signals)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        mtf_aligned, earnings_soon, atr_stop, signals, phit)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     pick_rows,
                 )
 
@@ -232,8 +247,8 @@ def write_scan(
                            (scan_id, trade_date, et_time, ticker, company, sector,
                             direction, was_pick, net_score, conviction, weighted_score,
                             grade, price, chg_pct, mtf_aligned, earnings_soon, atr_stop,
-                            fib_target, fib_label, signals)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            fib_target, fib_label, signals, phit)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                         feature_rows,
                     )
 

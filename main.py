@@ -84,6 +84,7 @@ def build_top5_table(picks: List[Tuple[TickerAnalysis, ConvictionScore]],
     tbl.add_column("Chg %",      justify="right",  width=8)
     tbl.add_column("Score",      justify="center", width=7)
     tbl.add_column("Grade",      justify="center", width=6)
+    tbl.add_column("P(hit)",     justify="right",  width=7)
     tbl.add_column("Conviction", width=18)
     tbl.add_column("Fib Target", justify="right",  width=12)
     tbl.add_column("Fib Label",  width=10)
@@ -110,6 +111,12 @@ def build_top5_table(picks: List[Tuple[TickerAnalysis, ConvictionScore]],
         else:
             fib_col = "dim"
 
+        if cs.phit is None:
+            phit_txt = Text("—", style="dim")
+        else:
+            phit_col = "green" if cs.phit >= 0.5 else "yellow" if cs.phit >= 0.35 else "red"
+            phit_txt = Text(f"{cs.phit * 100:.0f}%", style=phit_col)
+
         tbl.add_row(
             str(rank), ta.ticker,
             Text(ta.company_name[:20] + "…" if len(ta.company_name) > 20 else ta.company_name,
@@ -118,6 +125,7 @@ def build_top5_table(picks: List[Tuple[TickerAnalysis, ConvictionScore]],
             Text(chg_s,                       style=chg_col),
             Text(f"{ta.net_score:+d}",         style=_score_style(ta.net_score)),
             Text(cs.grade,                     style=_grade_style(cs.grade)),
+            phit_txt,
             _conviction_bar(cs.conviction_pct, direction),
             Text(fib_target,                   style=fib_col),
             Text(fib_label,                    style="dim"),

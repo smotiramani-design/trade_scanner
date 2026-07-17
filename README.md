@@ -30,21 +30,38 @@ Email report + Excel workbook + Web dashboard + P&L tracking
 
 ## Signal model — 10 signals
 
+Signal weights are **machine-learned**, not hand-tuned. An L2-regularised logistic regression (`backtest/logistic_tuner.py`) is trained on the labeled scanned universe — every ticker scanned, tagged end-of-day with whether its Fibonacci target was hit — and its coefficients are mapped onto the conviction weights below. The values shown are from the latest fit (630 labeled rows, walk-forward AUC **0.812**).
+
 | # | Signal | Weight | Description |
 |---|--------|--------|-------------|
-| 1 | **Candle pattern** | 1.5× | Engulfing, hammer, shooting star, doji, marubozu |
-| 2 | **Volume** | 1.5× | Current bar vs 20-bar average — direction only on high volume |
-| 3 | **SMA divergence** | 1.0× | % distance from 20-period SMA |
-| 4 | **Gaps** | 1.0× | Open unfilled gaps above/below price (proximity-sorted) |
-| 5 | **Stochastics** | 1.2× | %K/%D crossover + overbought/oversold zones |
-| 6 | **CCI** | 1.2× | Commodity Channel Index trend strength |
-| 7 | **Role Reversal** | 1.6× | Prior support/resistance acting as opposite level |
-| 8 | **Rel. Strength** | 1.3× | Outperformance vs SPY over 5-bar + 10-bar windows |
-| 9 | **VWAP** | 1.1× | Above/below VWAP with std deviation bands (hourly only) |
-| 10 | **News sentiment** | 0.9× | FMP headline scoring — keyword-based, 48h window |
+| 1 | **Candle pattern** | 0.88× | Engulfing, hammer, shooting star, doji, marubozu |
+| 2 | **Volume** | 1.64× | Current bar vs 20-bar average — direction only on high volume |
+| 3 | **SMA divergence** | 1.67× | % distance from 20-period SMA |
+| 4 | **Gaps** | 1.04× | Open unfilled gaps above/below price (proximity-sorted) |
+| 5 | **Stochastics** | 0.93× | %K/%D crossover + overbought/oversold zones |
+| 6 | **CCI** | 0.50× | Commodity Channel Index trend strength (floored — noisiest signal) |
+| 7 | **Role Reversal** | 1.32× | Prior support/resistance acting as opposite level |
+| 8 | **Rel. Strength** | 2.00× | Outperformance vs SPY over 5-bar + 10-bar windows (most predictive) |
+| 9 | **VWAP** | 1.06× | Above/below VWAP with std deviation bands (hourly only) |
+| 10 | **News sentiment** | 0.89× | FMP headline scoring — keyword-based, 48h window |
 
-Max weighted score: **11.4**. Conviction % = weighted score / 11.4 × 100.
+Max weighted score: **≈11.9**. Conviction % = weighted score / 11.9 × 100.
 Grade: A+ ≥85% · A ≥70% · B ≥55% · C ≥40% · D <40%
+
+Re-learn the weights weekly as more labeled data accumulates:
+
+```bash
+python -m backtest.logistic_tuner --apply --save-db   # writes conviction.py + logs the run
+```
+
+### Ranking by predicted P(hit)
+
+`--apply` also serializes the trained model to `models/phit_model.json`. When that artifact is present, the scanner ranks its surfaced picks by the model's **predicted probability of hitting the Fib target** — using the *full* model (10 signals + pick context + market regime), not just the 10 signal weights. This is a strict upgrade over ranking by conviction %, which only sees the linear signal weights.
+
+- Inference is pure-Python (a dot product through a sigmoid) — no scikit-learn/numpy needed at scan time, so the Lambda bundle stays light.
+- Feature construction reuses the exact training code path (`logistic_tuner.row_for_pick`), so live and training features can't drift.
+- If no model artifact exists, ranking falls back to conviction % automatically.
+- The predicted probability is shown in the terminal (`P(hit)` column) and stored per pick in Supabase (`picks.phit`, `scan_features.phit`) so predicted-vs-actual can be tracked over time.
 
 **Multi-timeframe conflict** (ENH-16): when hourly and daily signals disagree, conviction is reduced by 30% and grade drops one step.
 
@@ -65,7 +82,10 @@ The strategy has been backtested across **101 Nasdaq 100 tickers** (1-year daily
 # Run backtest on watchlist tickers
 python -m backtest.engine --universe watchlist --no-fib --stop 1.5 --tp 4.5 -v --save-csv
 
-# Auto-tune signal weights from backtest results
+# Learn signal weights from live labeled data (preferred — logistic regression)
+python -m backtest.logistic_tuner --apply --save-db
+
+# Legacy: auto-tune weights from a backtest CSV instead
 python -m backtest.weight_tuner output/backtest_*.csv --apply
 ```
 
@@ -266,9 +286,14 @@ intraday_scanner/
 │   ├── relative_strength.py     # Signal 8 — outperformance vs SPY
 │   ├── vwap.py                  # Signal 9 — VWAP with std deviation bands
 │   ├── news_sentiment.py        # Signal 10 — FMP headline keyword scoring
+│   ├── conviction.py            # Weighted scoring, grade, MTF penalty, earnings flag
+│   ├── phit.py                  # Live P(hit) inference — ranks picks by predicted probability
 │   ├── fibonacci.py             # Multi-day swing anchor + retracements + extensions
 │   ├── atr.py                   # ATR(14) dynamic stop loss computation
 │   └── multi_timeframe.py       # Hourly × daily signal alignment check
+│
+├── models/
+│   └── phit_model.json          # Serialized P(hit) model (written by logistic_tuner --apply)
 │
 ├── trading/
 │   ├── alpaca_client.py         # Alpaca TradingClient wrapper (paper only by default)
@@ -278,9 +303,15 @@ intraday_scanner/
 │
 ├── backtest/
 │   ├── engine.py                # Walk-forward backtester (no lookahead, signal cache)
-│   └── weight_tuner.py          # Auto-tune signal weights from backtest CSV output
+│   ├── logistic_tuner.py        # Learn conviction weights via L2 logistic regression on labeled picks
+│   └── weight_tuner.py          # Legacy: auto-tune signal weights from backtest CSV output
+│
+├── db/
+│   └── schema.sql               # Supabase schema: scans, picks, trades, scan_features, ml_weight_runs
 │
 ├── utils/
+│   ├── db_writer.py             # Persist scans/picks/trades + full scanned universe to Supabase
+│   ├── fib_validation.py        # End-of-day fib_hit labeling for picks + scan_features
 │   ├── email_sender.py          # Rich HTML email with pick cards, trade section, P&L
 │   ├── spreadsheet.py           # 4-sheet Excel workbook
 │   ├── exporter.py              # CSV + JSON export

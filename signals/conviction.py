@@ -5,28 +5,41 @@ Conviction goes beyond the raw net score by weighting signals
 that tend to have higher predictive value and penalizing
 conflicting or low-quality setups.
 
-Weights per signal (index matches SIGNAL_MODULES order):
-  0  Candle pattern   — 1.5x  (primary entry trigger)
-  1  Volume           — 1.5x  (confirms intent behind the move)
-  2  SMA divergence   — 1.0x
-  3  Gaps             — 1.0x
-  4  Stochastics      — 1.2x  (timing / momentum)
-  5  CCI              — 1.2x  (timing / momentum)
-  6  Role reversal    — 1.6x  (highest — defines the setup level)
+The weights below are LEARNED, not hand-tuned. They are produced by
+backtest/logistic_tuner.py, which fits an L2-regularised logistic regression on
+the labeled scanned universe (scan_features, tagged end-of-day with whether each
+Fibonacci target was hit) and maps the learned signal coefficients onto the
+0.5–2.0 conviction range. Re-run `python -m backtest.logistic_tuner --apply`
+weekly as more labeled rows accumulate; the values here update automatically.
 
-Max weighted score = sum of weights = 9.0
-Conviction % = weighted_score / 9.0 * 100  (clipped to ±100)
+Weights per signal (index matches SIGNAL_MODULES order — last learned fit,
+630 labeled rows, walk-forward AUC 0.812):
+  0  Candle pattern   — 0.88x
+  1  Volume           — 1.64x  (confirms intent behind the move)
+  2  SMA divergence   — 1.67x  (strongly predictive)
+  3  Gaps             — 1.04x
+  4  Stochastics      — 0.93x  (timing / momentum)
+  5  CCI              — 0.50x  (floored — noisiest signal)
+  6  Role reversal    — 1.32x  (defines the setup level)
+  7  Rel. Strength    — 2.00x  (maxed — most predictive signal)
+  8  VWAP             — 1.06x
+  9  News sentiment   — 0.89x
+
+Max weighted score = sum of weights ≈ 11.9
+Conviction % = weighted_score / MAX_WEIGHTED * 100  (clipped to ±100)
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from signals.base import Bias, SignalResult, TickerAnalysis
 
 #                      Candle  Vol   SMA   Gaps  Stoch  CCI  RoleRev  RS    VWAP  News
+# Learned by backtest/logistic_tuner.py (see module docstring). Do not hand-edit;
+# re-run `python -m backtest.logistic_tuner --apply` to refresh.
 WEIGHTS: List[float] = [0.88, 1.64, 1.67, 1.04, 0.93, 0.5, 1.32, 2.0, 1.06, 0.89]
-MAX_WEIGHTED = sum(WEIGHTS)   # 12.3 (10 signals)
+MAX_WEIGHTED = sum(WEIGHTS)   # ≈ 11.9 (10 signals)
 
 # Import from __init__ to keep a single source of truth
 # (conviction.py uses long-form names for analysis text)
@@ -49,13 +62,14 @@ SIG_NAMES = SIG_NAMES_LONG  # alias for backward compat
 class ConvictionScore:
     ticker: str
     raw_score: int          # −7 … +7
-    weighted_score: float   # −9.0 … +9.0
+    weighted_score: float   # −11.9 … +11.9  (±MAX_WEIGHTED)
     conviction_pct: float   # 0 … 100  (absolute, direction separate)
     direction: str          # "bullish" | "bearish" | "neutral"
     grade: str              # A+ / A / B / C / D
     analysis: str           # paragraph commentary
     key_signals: List[str] = field(default_factory=list)
     conflicting: List[str] = field(default_factory=list)
+    phit: Optional[float] = None   # model P(fib target hit), 0..1; None if no model
 
     @property
     def emoji(self) -> str:
@@ -203,20 +217,53 @@ def score_conviction(ta: TickerAnalysis) -> ConvictionScore:
     )
 
 
+def _attach_phit(scored: List[Tuple[TickerAnalysis, ConvictionScore]]) -> bool:
+    """
+    Enrich each ConvictionScore with the model's P(hit), in place.
+
+    Returns True if a model produced at least one probability (so callers can
+    rank by P(hit)); False means fall back to conviction ranking. Imported
+    lazily so the scanner works fine with no ML artifact present.
+    """
+    try:
+        from signals.phit import predict_phit, model_available
+    except Exception:
+        return False
+    if not model_available():
+        return False
+    any_scored = False
+    for ta, cs in scored:
+        cs.phit = predict_phit(ta, cs)
+        any_scored = any_scored or cs.phit is not None
+    return any_scored
+
+
 def top_picks(results: List[TickerAnalysis], n: int = 5) -> Tuple[
         List[Tuple[TickerAnalysis, ConvictionScore]],
         List[Tuple[TickerAnalysis, ConvictionScore]]]:
     """
-    Return (top_bull, top_bear) each of up to n entries,
-    sorted by conviction_pct descending within their direction.
+    Return (top_bull, top_bear) each of up to n entries.
+
+    When a trained P(hit) model is available (models/phit_model.json), picks are
+    ranked by the model's predicted probability of hitting the Fib target —
+    which uses the full signal + context + regime model. Otherwise they fall
+    back to ranking by conviction_pct. Conviction % is always tie-breaker so
+    ordering stays deterministic.
     """
     scored = [(ta, score_conviction(ta)) for ta in results]
+    use_phit = _attach_phit(scored)
+
+    def _key(item: Tuple[TickerAnalysis, ConvictionScore]):
+        cs = item[1]
+        primary = cs.phit if (use_phit and cs.phit is not None) else -1.0
+        return (primary, cs.conviction_pct)
+
     bulls = sorted(
         [(ta, cs) for ta, cs in scored if cs.direction == "bullish"],
-        key=lambda x: x[1].conviction_pct, reverse=True
+        key=_key, reverse=True
     )[:n]
     bears = sorted(
         [(ta, cs) for ta, cs in scored if cs.direction == "bearish"],
-        key=lambda x: x[1].conviction_pct, reverse=True
+        key=_key, reverse=True
     )[:n]
     return bulls, bears

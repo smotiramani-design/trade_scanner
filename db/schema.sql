@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS picks (
     mtf_aligned    BOOLEAN,     -- multi-timeframe confirmation
     earnings_soon  BOOLEAN,     -- earnings within 2 days
     atr_stop       NUMERIC,
-    signals        JSONB        -- {"Candle pattern": {"bias": "bull", "label": "..."}, ...}
+    signals        JSONB,       -- {"Candle pattern": {"bias": "bull", "label": "..."}, ...}
+    phit           NUMERIC      -- model P(fib target hit), 0–1; drives pick ranking
 );
 
 CREATE TABLE IF NOT EXISTS trades (
@@ -98,6 +99,7 @@ ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_hit           BOOLEAN;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_window_high   NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_window_low    NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_validated_at  TIMESTAMPTZ;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS phit              NUMERIC;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_date DATE;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS et_time    TEXT;
 
@@ -299,8 +301,11 @@ CREATE TABLE IF NOT EXISTS scan_features (
     fib_hit          BOOLEAN,     -- set EOD: did price hit target within 1 hr?
     fib_window_high  NUMERIC,
     fib_window_low   NUMERIC,
-    fib_validated_at TIMESTAMPTZ
+    fib_validated_at TIMESTAMPTZ,
+    phit             NUMERIC      -- model P(fib target hit) at scan time, 0–1
 );
+
+ALTER TABLE scan_features ADD COLUMN IF NOT EXISTS phit NUMERIC;
 
 CREATE INDEX IF NOT EXISTS idx_scan_features_scan_id ON scan_features (scan_id);
 CREATE INDEX IF NOT EXISTS idx_scan_features_day     ON scan_features (trade_date DESC, direction);

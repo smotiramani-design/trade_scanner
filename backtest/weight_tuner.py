@@ -280,16 +280,25 @@ def print_report(stats: List[SignalStats], new_weights: List[float]) -> None:
 # ── Apply weights ─────────────────────────────────────────────────────────────
 
 def apply_weights(new_weights: List[float]) -> bool:
-    """Write new weights directly into signals/conviction.py."""
+    """Write new weights directly into signals/conviction.py.
+
+    Returns True if the weights are in place afterwards — including the case
+    where they were already identical (idempotent re-apply). Only returns False
+    when the WEIGHTS line genuinely can't be found.
+    """
     import re
     path = Path(__file__).parent.parent / "signals" / "conviction.py"
     content = path.read_text()
     fmt  = ", ".join(str(w) for w in new_weights)
     new_line = f"WEIGHTS: List[float] = [{fmt}]"
-    fixed = re.sub(r"WEIGHTS: List\[float\] = \[.*?\]", new_line, content)
-    if fixed == content:
+    pattern = r"WEIGHTS: List\[float\] = \[.*?\]"
+    if not re.search(pattern, content):
         print("ERROR: Could not find WEIGHTS line in conviction.py")
         return False
+    fixed = re.sub(pattern, new_line, content)
+    if fixed == content:
+        print(f"✓ Weights already up to date in {path}")
+        return True
     path.write_text(fixed)
     print(f"✓ Weights updated in {path}")
     return True
