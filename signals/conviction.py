@@ -25,7 +25,7 @@ from typing import List, Tuple
 from signals.base import Bias, SignalResult, TickerAnalysis
 
 #                      Candle  Vol   SMA   Gaps  Stoch  CCI  RoleRev  RS    VWAP  News
-WEIGHTS: List[float] = [1.5,   1.5,  1.0,  1.0,  1.2,  1.2,  1.6,   1.3,  1.1,  0.9]
+WEIGHTS: List[float] = [0.88, 1.64, 1.67, 1.04, 0.93, 0.5, 1.32, 2.0, 1.06, 0.89]
 MAX_WEIGHTED = sum(WEIGHTS)   # 12.3 (10 signals)
 
 # Import from __init__ to keep a single source of truth
