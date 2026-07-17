@@ -52,7 +52,9 @@ python3 -m pip install \
 # ── 2. Project source code ────────────────────────────────────────────────────
 echo "▶ Copying project source ..."
 SRC_FILES=(lambda_function.py config.py scanner.py universes.py)
-SRC_DIRS=(signals data trading utils db)
+# models/ ships the trained P(hit) model so the scanner can rank by predicted
+# probability in production; backtest/ ships so retraining tools are available.
+SRC_DIRS=(signals data trading utils db models backtest)
 for f in "${SRC_FILES[@]}"; do cp "$f" "$PKG/"; done
 for d in "${SRC_DIRS[@]}"; do
   rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='*copy.py' "$d" "$PKG/"

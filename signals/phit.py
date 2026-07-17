@@ -47,7 +47,11 @@ def _load_model() -> Optional[dict]:
         return _model
     _model_loaded = True
 
-    from backtest.logistic_tuner import MODEL_PATH
+    try:
+        from backtest.logistic_tuner import MODEL_PATH
+    except Exception:  # backtest package not bundled — degrade to conviction ranking
+        log.debug("backtest.logistic_tuner unavailable — using conviction ranking.")
+        return None
     if not MODEL_PATH.exists():
         log.debug("No P(hit) model at %s — using conviction ranking.", MODEL_PATH)
         return None
