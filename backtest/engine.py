@@ -49,7 +49,7 @@ import config
 from data.yahoo_client import Bar, _yfinance_bars
 from signals import run_all
 from signals.base import TickerAnalysis
-from signals.conviction import score_conviction, ConvictionScore
+from signals.conviction import score_conviction, ConvictionScore, direction_from_signals
 from signals.fibonacci import compute_fibonacci
 
 log = logging.getLogger(__name__)
@@ -196,6 +196,7 @@ def _build_signal_cache(
             bars          = window_bars,
             current_price = cur.close,
             net_score     = ta.net_score,
+            direction     = direction_from_signals(sigs),
         )
         cache[i] = (ta, score_conviction(ta))
 

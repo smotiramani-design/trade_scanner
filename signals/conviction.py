@@ -90,6 +90,32 @@ def _grade(pct: float, direction: str) -> str:
     return "D"
 
 
+def weighted_score_and_direction(
+    signals: List[SignalResult],
+) -> Tuple[float, str]:
+    """
+    Same weighted direction used for picks, Fib targets, and commentary.
+
+    Raw net_score (bull-count − bear-count) can disagree with this when a few
+    high-weight signals outweigh more low-weight ones. Always prefer this for
+    trade direction so bull picks get upside targets and bear picks downside.
+    """
+    ws = 0.0
+    for i, sig in enumerate(signals):
+        w = WEIGHTS[i] if i < len(WEIGHTS) else 1.0
+        if sig.bias == Bias.BULL:
+            ws += w
+        elif sig.bias == Bias.BEAR:
+            ws -= w
+    direction = "bullish" if ws > 0 else "bearish" if ws < 0 else "neutral"
+    return ws, direction
+
+
+def direction_from_signals(signals: List[SignalResult]) -> str:
+    """Weighted conviction direction: 'bullish' | 'bearish' | 'neutral'."""
+    return weighted_score_and_direction(signals)[1]
+
+
 def _commentary(ta: TickerAnalysis, ws: float, direction: str,
                 key: List[str], conflicts: List[str]) -> str:
     """Generate a 3–4 sentence analysis paragraph."""
@@ -97,18 +123,21 @@ def _commentary(ta: TickerAnalysis, ws: float, direction: str,
     chg_str   = f"{ta.chg_pct:+.2f}%" if ta.chg_pct else "flat"
     mode_str  = "intraday (hourly)" if ta.mode == "Hourly" else "daily"
     score_str = f"{ta.net_score:+d}/{len(ta.signals)}"
+    # Raw net score can disagree with weighted direction — don't call a
+    # negative score "bullish" (or vice versa). State both clearly.
+    raw_note = f"raw net score {score_str}"
 
     # Opening line — price action summary
     if direction == "bullish":
         opener = (
             f"{ta.ticker} is trading at {price_str} ({chg_str} on the session) and "
-            f"shows a net bullish signal score of {score_str} across the {mode_str} chart, "
+            f"shows weighted bullish conviction ({raw_note}) across the {mode_str} chart, "
             f"indicating accumulation and buying pressure."
         )
     elif direction == "bearish":
         opener = (
             f"{ta.ticker} is trading at {price_str} ({chg_str} on the session) and "
-            f"shows a net bearish signal score of {score_str} across the {mode_str} chart, "
+            f"shows weighted bearish conviction ({raw_note}) across the {mode_str} chart, "
             f"indicating distribution and selling pressure."
         )
     else:
@@ -152,19 +181,14 @@ def _commentary(ta: TickerAnalysis, ws: float, direction: str,
 
 def score_conviction(ta: TickerAnalysis) -> ConvictionScore:
     """Compute weighted conviction score and commentary for one ticker."""
-    ws = 0.0
+    ws, direction = weighted_score_and_direction(ta.signals)
     key_signals: List[str] = []
     conflicts:   List[str] = []
 
     for i, sig in enumerate(ta.signals):
-        w = WEIGHTS[i] if i < len(WEIGHTS) else 1.0
         label_short = SIG_NAMES[i] if i < len(SIG_NAMES) else sig.name
-
         if sig.bias == Bias.BULL:
-            ws += w
             key_signals.append(f"{label_short} ({sig.label})")
-        elif sig.bias == Bias.BEAR:
-            ws -= w
 
     # detect conflicts: bull candle but bear momentum, or vice versa
     candle_bias = ta.signals[0].bias if ta.signals else Bias.NEUTRAL
@@ -180,7 +204,6 @@ def score_conviction(ta: TickerAnalysis) -> ConvictionScore:
         conflicts.append("volume vs candle")
 
     pct = abs(ws) / MAX_WEIGHTED * 100
-    direction = "bullish" if ws > 0 else "bearish" if ws < 0 else "neutral"
     grade = _grade(pct, direction)
 
     # Only keep bull key signals for bullish, bear-signal labels for bearish

@@ -57,11 +57,15 @@ CREATE TABLE IF NOT EXISTS picks (
     analysis       TEXT,        -- the full conviction commentary paragraph
     key_signals    JSONB,       -- ["Candle pattern (Bullish engulfing)", ...]
     conflicting    JSONB,       -- ["stochastics vs candle", ...]
-    fib_target     NUMERIC,     -- next-hour Fibonacci target
+    fib_target     NUMERIC,     -- primary Fib take-profit (hit-validated)
     fib_label      TEXT,
+    fib_entry      NUMERIC,     -- Fib pullback/bounce entry
+    fib_stop       NUMERIC,     -- Fib invalidation stop
+    fib_t1         NUMERIC,     -- first extension target
+    fib_t2         NUMERIC,     -- second extension target
     fib_hit        BOOLEAN,     -- set at 4 PM: did price hit target within 1 hr?
-    fib_window_high NUMERIC,    -- high in the validation window
-    fib_window_low  NUMERIC,    -- low in the validation window
+    fib_window_high NUMERIC,    -- high in the validation window (internal)
+    fib_window_low  NUMERIC,    -- low in the validation window (internal)
     fib_validated_at TIMESTAMPTZ,
     mtf_aligned    BOOLEAN,     -- multi-timeframe confirmation
     earnings_soon  BOOLEAN,     -- earnings within 2 days
@@ -99,6 +103,10 @@ ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_hit           BOOLEAN;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_window_high   NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_window_low    NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_validated_at  TIMESTAMPTZ;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_entry         NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_stop          NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_t1            NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_t2            NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS phit              NUMERIC;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_date DATE;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS et_time    TEXT;
@@ -133,6 +141,10 @@ SELECT
     p.chg_pct,
     p.fib_target,
     p.fib_label,
+    p.fib_entry,
+    p.fib_stop,
+    p.fib_t1,
+    p.fib_t2,
     p.fib_hit,
     p.fib_window_high,
     p.fib_window_low,

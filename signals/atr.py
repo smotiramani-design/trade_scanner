@@ -72,17 +72,29 @@ def compute_atr_stop(
     net_score:  int,
     multiplier: float = ATR_MULTIPLIER,
     period:     int   = ATR_PERIOD,
+    direction:  Optional[str] = None,
 ) -> Optional[float]:
     """
     Compute ATR-based stop loss price.
 
     Returns the stop price (not distance), or None if ATR cannot be computed.
 
-    For longs  (net_score > 0): stop = price - (multiplier × ATR)
-    For shorts (net_score < 0): stop = price + (multiplier × ATR)
-    Neutral:                    returns None
+    Prefer `direction` ("bullish"|"bearish"|"neutral") when available so the stop
+    matches weighted conviction (same side as Fib / pick ranking). Falls back to
+    net_score when direction is omitted.
+
+    For longs  (bullish): stop = price - (multiplier × ATR)
+    For shorts (bearish): stop = price + (multiplier × ATR)
+    Neutral:              returns None
     """
-    if not price or price <= 0 or net_score == 0:
+    if not price or price <= 0:
+        return None
+
+    if direction not in ("bullish", "bearish", "neutral"):
+        if net_score == 0:
+            return None
+        direction = "bullish" if net_score > 0 else "bearish"
+    if direction == "neutral":
         return None
 
     atr = compute_atr(bars, period)
@@ -91,7 +103,7 @@ def compute_atr_stop(
 
     stop_distance = multiplier * atr
 
-    if net_score > 0:
+    if direction == "bullish":
         stop = round(price - stop_distance, 2)
     else:
         stop = round(price + stop_distance, 2)

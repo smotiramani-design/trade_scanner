@@ -68,16 +68,31 @@ export default function PickCard({ pick }: { pick: PickRow }) {
           </div>
         )}
 
-        {(pick.fib_target != null || pick.fib_label) && (
+        {(pick.fib_entry != null || pick.fib_stop != null ||
+          pick.fib_t1 != null || pick.fib_t2 != null || pick.fib_target != null) && (
           <div className="fib-row">
-            <div className="fib-item">
-              <label>Fib target</label>
-              <span>{fmtPrice(pick.fib_target)}</span>
-            </div>
-            {pick.fib_label && (
+            {pick.fib_entry != null && (
               <div className="fib-item">
-                <label>Level</label>
-                <span>{pick.fib_label}</span>
+                <label>Entry</label>
+                <span>{fmtPrice(pick.fib_entry)}</span>
+              </div>
+            )}
+            {pick.fib_stop != null && (
+              <div className="fib-item">
+                <label>Stop</label>
+                <span>{fmtPrice(pick.fib_stop)}</span>
+              </div>
+            )}
+            {(pick.fib_t1 ?? pick.fib_target) != null && (
+              <div className="fib-item">
+                <label>T1{pick.fib_label ? ` · ${pick.fib_label}` : ""}</label>
+                <span>{fmtPrice(pick.fib_t1 ?? pick.fib_target)}</span>
+              </div>
+            )}
+            {pick.fib_t2 != null && (
+              <div className="fib-item">
+                <label>T2</label>
+                <span>{fmtPrice(pick.fib_t2)}</span>
               </div>
             )}
             {pick.fib_target != null && (
@@ -94,23 +109,9 @@ export default function PickCard({ pick }: { pick: PickRow }) {
 
         {pick.fib_target != null && (
           pick.fib_hit === true ? (
-          <div className="fib-hit-badge hit">
-            ✓ Target hit
-            {pick.fib_window_high != null && pick.fib_window_low != null && (
-              <span className="fib-hit-range mono">
-                {" "}· hi {fmtPrice(pick.fib_window_high)} / lo {fmtPrice(pick.fib_window_low)}
-              </span>
-            )}
-          </div>
+          <div className="fib-hit-badge hit">✓ Target hit</div>
           ) : pick.fib_hit === false ? (
-          <div className="fib-hit-badge miss">
-            ✗ Target missed
-            {pick.fib_window_high != null && pick.fib_window_low != null && (
-              <span className="fib-hit-range mono">
-                {" "}· hi {fmtPrice(pick.fib_window_high)} / lo {fmtPrice(pick.fib_window_low)}
-              </span>
-            )}
-          </div>
+          <div className="fib-hit-badge miss">✗ Target missed</div>
           ) : (
           <div className="fib-hit-badge pending">
             ◷ Hit check pending — runs at 4 PM ET

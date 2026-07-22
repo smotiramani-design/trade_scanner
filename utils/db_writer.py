@@ -74,17 +74,39 @@ def _signals_json(ta: TickerAnalysis) -> dict:
     return out
 
 
-def _fib_target(ta: TickerAnalysis) -> Tuple[Optional[float], Optional[str]]:
+def _fib_plan(ta: TickerAnalysis) -> Tuple[
+    Optional[float], Optional[str],
+    Optional[float], Optional[float], Optional[float], Optional[float],
+]:
+    """
+    Return (target, label, entry, stop, t1, t2) from FibLevels.
+
+    `target` is the primary take-profit used for hit validation (correct side
+    of price). Entry/stop/t1/t2 are the full trade plan shown on the dashboard.
+    """
     fib = getattr(ta, "fib", None)
-    if fib and getattr(fib, "next_hour_target", None):
-        return float(fib.next_hour_target), getattr(fib, "next_hour_label", None)
-    return None, None
+    if not fib:
+        return None, None, None, None, None, None
+    target = getattr(fib, "next_hour_target", None)
+    label  = getattr(fib, "next_hour_label", None) or None
+    entry  = getattr(fib, "entry_price", None)
+    stop   = getattr(fib, "stop_loss", None)
+    t1     = getattr(fib, "target_1", None)
+    t2     = getattr(fib, "target_2", None)
+    return (
+        float(target) if target is not None else None,
+        label,
+        float(entry) if entry is not None else None,
+        float(stop) if stop is not None else None,
+        float(t1) if t1 is not None else None,
+        float(t2) if t2 is not None else None,
+    )
 
 
 def _pick_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
               direction: str, rank: int, trade_date, et_time: str) -> tuple:
     import json
-    fib_t, fib_l = _fib_target(ta)
+    fib_t, fib_l, fib_e, fib_s, fib_t1, fib_t2 = _fib_plan(ta)
     atr = getattr(ta, "atr_stop", None)
     return (
         scan_id, trade_date, et_time,
@@ -95,7 +117,7 @@ def _pick_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
         cs.analysis or None,
         json.dumps(cs.key_signals or []),
         json.dumps(cs.conflicting or []),
-        fib_t, fib_l,
+        fib_t, fib_l, fib_e, fib_s, fib_t1, fib_t2,
         bool(getattr(ta, "mtf_aligned", True)),
         bool(getattr(ta, "earnings_soon", False)),
         float(atr) if atr else None,
@@ -111,7 +133,7 @@ def _feature_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
                  was_pick: bool, trade_date, et_time: str) -> tuple:
     """One scan_features row for a single scanned ticker (full universe)."""
     import json
-    fib_t, fib_l = _fib_target(ta)
+    fib_t, fib_l, _, _, _, _ = _fib_plan(ta)
     atr = getattr(ta, "atr_stop", None)
     return (
         scan_id, trade_date, et_time,
@@ -229,9 +251,10 @@ def write_scan(
                        (scan_id, trade_date, et_time, ticker, company, sector,
                         direction, rank, price, chg_pct,
                         net_score, conviction, weighted_score, grade, verdict,
-                        analysis, key_signals, conflicting, fib_target, fib_label,
+                        analysis, key_signals, conflicting,
+                        fib_target, fib_label, fib_entry, fib_stop, fib_t1, fib_t2,
                         mtf_aligned, earnings_soon, atr_stop, signals, phit)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     pick_rows,
                 )
 

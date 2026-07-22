@@ -320,7 +320,7 @@ def get_signals_for_ticker(ticker: str, hourly: bool = Query(default=False)):
     try:
         from data.yahoo_client import get_bars
         from signals import run_all, SIG_NAMES
-        from signals.conviction import score_conviction
+        from signals.conviction import direction_from_signals, score_conviction
         from signals.base import TickerAnalysis
         from signals.fibonacci import compute_fibonacci
 
@@ -335,8 +335,11 @@ def get_signals_for_ticker(ticker: str, hourly: bool = Query(default=False)):
             mode="Hourly" if hourly else "Daily",
             signals=sigs,
         )
-        ta.fib = compute_fibonacci(ticker, bars, bars[-1].close, ta.net_score)
-        cs     = score_conviction(ta)
+        trade_dir = direction_from_signals(sigs)
+        ta.fib = compute_fibonacci(
+            ticker, bars, bars[-1].close, ta.net_score, direction=trade_dir,
+        )
+        cs = score_conviction(ta)
 
         return {
             "ticker":     ticker.upper(),

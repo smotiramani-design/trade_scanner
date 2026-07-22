@@ -8,21 +8,23 @@ Anchor selection:
 
 Entry / Exit / Stop framework (momentum-synced)
 ────────────────────────────────────────────────
-BULLISH setup (net_score > 0):
+BULLISH setup (weighted conviction; falls back to net_score > 0):
   Entry       → 38.2% retracement (ideal pullback entry)
   Stop loss   → 61.8% retracement (invalidation level)
   Target 1    → 100% extension  (measured move)
   Target 2    → 127.2% extension
   Target 3    → 161.8% extension (full measured move)
+  Next-hour   → nearest extension ABOVE current price
 
-BEARISH setup (net_score < 0):
+BEARISH setup (weighted conviction; falls back to net_score < 0):
   Entry       → 38.2% retracement bounce (ideal short entry)
   Stop loss   → 61.8% retracement (invalidation level)
   Target 1    → 100% extension below swing low
   Target 2    → 127.2% extension
   Target 3    → 161.8% extension
+  Next-hour   → nearest extension BELOW current price
 
-NEUTRAL (net_score == 0):
+NEUTRAL (weighted neutral / net_score == 0):
   Entry       → 50% retracement
   Stop loss   → 78.6% retracement
   Target 1    → 23.6% retracement (mean reversion)
@@ -30,6 +32,8 @@ NEUTRAL (net_score == 0):
   Target 3    → 127.2% extension
 
 Risk/reward is pre-calculated for each setup.
+Direction for Fib MUST match pick ranking (weighted conviction), not raw
+net_score alone — otherwise bull cards can show downside targets.
 """
 from __future__ import annotations
 
@@ -354,18 +358,45 @@ def _assign_trade_levels(
         fib.risk_reward_t2 = fib._rr(fib.entry_price, fib.stop_loss, t2) if t2 else None
         fib.risk_reward_t3 = fib._rr(fib.entry_price, fib.stop_loss, t3) if t3 else None
 
-    # Next-hour target: nearest extension in momentum direction
+    # Primary take-profit for hit validation + dashboard:
+    # prefer T1 when it sits on the correct side of price; else nearest
+    # extension in trade direction. Never assign a target on the wrong side.
+    tgt_price: Optional[float] = None
+    tgt_lbl = ""
     if fib.direction == "bullish":
-        tgt = _nearest_above(extensions, cur)
+        if t1 is not None and t1 > cur:
+            tgt_price, tgt_lbl = t1, t1_lbl
+        else:
+            lvl = _nearest_above(extensions, cur)
+            if lvl:
+                tgt_price, tgt_lbl = lvl.price, lvl.label
     elif fib.direction == "bearish":
-        tgt = _nearest_below(extensions, cur)
+        if t1 is not None and t1 < cur:
+            tgt_price, tgt_lbl = t1, t1_lbl
+        else:
+            lvl = _nearest_below(extensions, cur)
+            if lvl:
+                tgt_price, tgt_lbl = lvl.price, lvl.label
     else:
-        tgt = r500
+        if r500 and r500.price != cur:
+            tgt_price, tgt_lbl = r500.price, r500.label
 
-    if tgt:
-        tgt.is_target        = True
-        fib.next_hour_target = tgt.price
-        fib.next_hour_label  = tgt.label
+    if tgt_price is not None:
+        if fib.direction == "bullish" and tgt_price <= cur:
+            tgt_price = None
+        elif fib.direction == "bearish" and tgt_price >= cur:
+            tgt_price = None
+
+    if tgt_price is not None:
+        fib.next_hour_target = tgt_price
+        fib.next_hour_label  = tgt_lbl
+        for lvl in extensions:
+            if abs(lvl.price - tgt_price) < 1e-9:
+                lvl.is_target = True
+                break
+    else:
+        fib.next_hour_target = None
+        fib.next_hour_label  = ""
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -377,11 +408,16 @@ def compute_fibonacci(
     net_score:      int,
     premarket_high: Optional[float] = None,
     premarket_low:  Optional[float] = None,
+    direction:      Optional[str] = None,
 ) -> Optional[FibLevels]:
     """
     Compute full Fibonacci level set with entry/exit/stop targets.
     Falls back to last bar close if current_price is 0/None.
     Returns None only if bars are completely insufficient.
+
+    Prefer `direction` ("bullish"|"bearish"|"neutral") when available — it should
+    match weighted conviction used for pick ranking. `net_score` is only used as
+    a fallback when direction is omitted (legacy callers).
     """
     if not bars or len(bars) < 5:
         return None
@@ -391,7 +427,8 @@ def compute_fibonacci(
     if not price or price <= 0:
         return None
 
-    direction  = "bullish" if net_score > 0 else "bearish" if net_score < 0 else "neutral"
+    if direction not in ("bullish", "bearish", "neutral"):
+        direction = "bullish" if net_score > 0 else "bearish" if net_score < 0 else "neutral"
     swing_high, swing_low, anchor_type = _select_anchor(bars, premarket_high, premarket_low)
     swing_range = swing_high - swing_low
     if swing_range <= 0:

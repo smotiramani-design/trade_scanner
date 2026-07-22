@@ -16,6 +16,10 @@ export interface PickRow {
   chg_pct: number | null;
   fib_target: number | null;
   fib_label: string | null;
+  fib_entry: number | null;
+  fib_stop: number | null;
+  fib_t1: number | null;
+  fib_t2: number | null;
   fib_hit: boolean | null;
   fib_window_high: number | null;
   fib_window_low: number | null;

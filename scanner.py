@@ -233,6 +233,11 @@ def scan(
         # ── Earnings flag (ENH-11) ────────────────────────────────────────────
         ta.earnings_soon = earnings_flags.get(ticker, False)
 
+        # Weighted conviction direction (same as pick ranking) — Fib/ATR must
+        # follow this so bull picks never get downside next-hour targets.
+        from signals.conviction import direction_from_signals
+        trade_dir = direction_from_signals(sigs)
+
         # ── Fibonacci ─────────────────────────────────────────────────────────
         from signals.fibonacci import compute_fibonacci
         ta.fib = compute_fibonacci(
@@ -242,11 +247,12 @@ def scan(
             net_score=ta.net_score,
             premarket_high=pm_high,
             premarket_low=pm_low,
+            direction=trade_dir,
         )
 
         # ── ATR-based stop override (ENH-10) ──────────────────────────────────
         from signals.atr import compute_atr_stop
-        ta.atr_stop = compute_atr_stop(bars, price, ta.net_score)
+        ta.atr_stop = compute_atr_stop(bars, price, ta.net_score, direction=trade_dir)
 
         results.append(ta)
 
