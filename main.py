@@ -10,12 +10,12 @@ Pipeline:
   6. Send rich HTML email with Fibonacci section + spreadsheet attached
 
 Usage:
-  python main.py                                  # full S&P 500
   python main.py                                  # full major_us_markets (default)
-  python main.py --universe major_us_markets      # 300 tickers: S&P500 + Nasdaq100 + DJ + NYSE
+  python main.py --universe major_us_markets      # ~1,036 tickers: S&P500 + Nasdaq100 + Russell1000
+  python main.py --universe russell1000           # ~1,000 top US large caps
   python main.py --universe sp500 --max 50
   python main.py --universe nasdaq100
-  python main.py --universe nyse
+  python main.py --universe nyse_american
   python main.py --tickers AAPL,MSFT,NVDA,TSLA
   python main.py --universe sp500 --no-email
   python main.py --universe major_us_markets --daily
@@ -221,7 +221,7 @@ def print_conviction_detail(ta: TickerAnalysis, cs: ConvictionScore,
 
 @click.command()
 @click.option("--universe", "-u", default=None,
-              type=click.Choice(["major_us_markets", "sp500", "nasdaq100", "dowjones", "nyse_american", "watchlist", "watchlist_t1", "watchlist_t2"], case_sensitive=False))
+              type=click.Choice(["major_us_markets", "sp500", "nasdaq100", "russell1000", "dowjones", "nyse_american", "watchlist", "watchlist_t1", "watchlist_t2"], case_sensitive=False))
 @click.option("--tickers", "-t", default=None, help="Comma-separated custom tickers.")
 @click.option("--max", "max_tickers", default=None, type=int, help="Cap tickers scanned.")
 @click.option("--top", "top_n", default=None, type=int, help="Top N conviction picks.")

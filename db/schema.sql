@@ -233,8 +233,42 @@ CREATE INDEX IF NOT EXISTS idx_momentum_scans_day      ON momentum_scans (trade_
 CREATE INDEX IF NOT EXISTS idx_momentum_picks_scan_id  ON momentum_picks (scan_id);
 CREATE INDEX IF NOT EXISTS idx_momentum_picks_day      ON momentum_picks (trade_date DESC, tier, rank);
 
+-- ── Daily scanner upgrade (conviction + Fibonacci model, top 10 long/short) ───
+-- The daily scan now reuses the intraday 10-signal + sentiment + Fibonacci engine
+-- on daily bars. These columns extend the original pre-market momentum tables so
+-- the same tables carry: direction (long/short), conviction/grade, the full Fib
+-- plan, the whole-day (9:15→4 PM) target, and the 4 PM target-hit result.
+ALTER TABLE momentum_scans ADD COLUMN IF NOT EXISTS mode    TEXT;   -- 'Daily'
+ALTER TABLE momentum_scans ADD COLUMN IF NOT EXISTS n_long  INT;
+ALTER TABLE momentum_scans ADD COLUMN IF NOT EXISTS n_short INT;
+
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS direction        TEXT;      -- 'bull' | 'bear'
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS net_score        INT;       -- raw −10…+10
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS grade            TEXT;      -- A+ / A / B / C / D
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS price            NUMERIC;   -- price at scan time (9:15)
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS chg_pct          NUMERIC;   -- session change %
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS analysis         TEXT;      -- conviction commentary
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS key_signals      JSONB;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS signals          JSONB;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS phit             NUMERIC;   -- model P(target hit), 0–1
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS fib_direction    TEXT;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS fib_entry        NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS fib_stop         NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS fib_t1           NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS fib_t2           NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS fib_t3           NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS day_target       NUMERIC;   -- whole-day (9:15→4 PM) Fib target
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS day_target_label TEXT;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS target_hit       BOOLEAN;   -- set at 4 PM
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS day_high         NUMERIC;   -- session high (9:15→4 PM)
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS day_low          NUMERIC;   -- session low  (9:15→4 PM)
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS validated_at     TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_momentum_picks_dir ON momentum_picks (trade_date DESC, direction, rank);
+
 DROP VIEW IF EXISTS v_today_momentum_picks;
 DROP VIEW IF EXISTS v_momentum_picks;
+DROP VIEW IF EXISTS v_momentum_hit_stats;
 
 CREATE VIEW v_momentum_picks AS
 SELECT
@@ -243,20 +277,42 @@ SELECT
     s.et_hour,
     s.session,
     s.universe,
+    s.mode,
     s.run_ts,
     p.scan_id,
     p.ticker,
     p.company,
     p.sector,
     p.tier,
+    p.direction,
     p.rank,
     p.score,
+    p.net_score,
     p.conviction,
+    p.grade,
+    p.price,
+    p.chg_pct,
     p.pm_change_pct,
     p.pm_volume,
     p.pm_price,
     p.prev_close,
     p.gap_pct,
+    p.analysis,
+    p.key_signals,
+    p.signals,
+    p.phit,
+    p.fib_direction,
+    p.fib_entry,
+    p.fib_stop,
+    p.fib_t1,
+    p.fib_t2,
+    p.fib_t3,
+    p.day_target,
+    p.day_target_label,
+    p.target_hit,
+    p.day_high,
+    p.day_low,
+    p.validated_at,
     p.l1_catalyst,
     p.l2_volume,
     p.l3_price,
@@ -265,14 +321,32 @@ SELECT
     p.data_sources
 FROM momentum_picks p
 JOIN momentum_scans s ON s.id = p.scan_id
-ORDER BY s.run_ts DESC, p.tier, p.rank NULLS LAST, p.conviction DESC NULLS LAST;
+ORDER BY s.run_ts DESC, p.direction, p.rank NULLS LAST, p.conviction DESC NULLS LAST;
 
 CREATE VIEW v_today_momentum_picks AS
 SELECT * FROM v_momentum_picks
 WHERE trade_date = (now() AT TIME ZONE 'America/New_York')::date;
 
+-- Per-day hit-rate stats for the whole-day Fib target (populated at 4 PM).
+CREATE VIEW v_momentum_hit_stats AS
+SELECT
+    trade_date,
+    count(*)                                                      AS n_picks,
+    count(*) FILTER (WHERE direction = 'bull')                    AS n_long,
+    count(*) FILTER (WHERE direction = 'bear')                    AS n_short,
+    count(*) FILTER (WHERE target_hit IS NOT NULL)                AS validated,
+    count(*) FILTER (WHERE target_hit)                            AS hits,
+    count(*) FILTER (WHERE target_hit = false)                    AS misses,
+    count(*) FILTER (WHERE direction = 'bull' AND target_hit IS NOT NULL) AS long_validated,
+    count(*) FILTER (WHERE direction = 'bull' AND target_hit)             AS long_hits,
+    count(*) FILTER (WHERE direction = 'bear' AND target_hit IS NOT NULL) AS short_validated,
+    count(*) FILTER (WHERE direction = 'bear' AND target_hit)             AS short_hits
+FROM momentum_picks
+GROUP BY trade_date
+ORDER BY trade_date DESC;
+
 GRANT SELECT ON momentum_scans, momentum_picks TO anon, authenticated;
-GRANT SELECT ON v_momentum_picks, v_today_momentum_picks TO anon, authenticated;
+GRANT SELECT ON v_momentum_picks, v_today_momentum_picks, v_momentum_hit_stats TO anon, authenticated;
 
 ALTER TABLE momentum_scans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE momentum_picks ENABLE ROW LEVEL SECURITY;

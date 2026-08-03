@@ -119,10 +119,17 @@ def _hit(direction: str, target: float, hi: Optional[float], lo: Optional[float]
     return None
 
 
-def validate_today_fib_hits(trade_date=None) -> dict:
+def validate_today_fib_hits(trade_date=None, now=None) -> dict:
     """
-    Validate Fib targets for all picks on trade_date that have a fib_target.
-    Window start = each scan's run_ts (actual run time, not et_time label).
+    Validate Fib targets for picks on trade_date whose 1-hour window has closed.
+
+    Window start = each scan's run_ts; window end = run_ts + 1 hour (capped at the
+    4 PM close). Designed to run EVERY HOUR (11 AM–4 PM ET): each run grades only the
+    picks whose window has just elapsed and that aren't graded yet (fib_hit IS NULL),
+    so the 10 AM picks are graded at 11 AM, the 11 AM picks at 12 PM, and so on —
+    hourly feedback instead of a single 4 PM sweep.
+
+    `now` (ET) bounds which windows count as closed; defaults to the current time.
     """
     if not config.DB_ENABLED:
         log.warning("DB disabled — skipping fib validation.")
@@ -130,6 +137,12 @@ def validate_today_fib_hits(trade_date=None) -> dict:
 
     if trade_date is None:
         trade_date = datetime.now(ET).date()
+    if now is None:
+        now = datetime.now(ET)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=ET)
+    else:
+        now = now.astimezone(ET)
 
     from utils.db_writer import init_db
 
@@ -139,6 +152,7 @@ def validate_today_fib_hits(trade_date=None) -> dict:
     hits = 0
     misses = 0
     unknown = 0
+    pending = 0
 
     try:
         init_db(conn)
@@ -151,6 +165,7 @@ def validate_today_fib_hits(trade_date=None) -> dict:
                 JOIN scans s ON s.id = p.scan_id
                 WHERE p.trade_date = %s
                   AND p.fib_target IS NOT NULL
+                  AND p.fib_hit IS NULL
                 ORDER BY s.run_ts, p.id
                 """,
                 (trade_date,),
@@ -161,6 +176,12 @@ def validate_today_fib_hits(trade_date=None) -> dict:
             target = float(fib_target)
             start_et = run_ts.astimezone(ET) if run_ts.tzinfo else run_ts.replace(tzinfo=ET)
             end_et = _parse_window_end(start_et)
+
+            # Skip picks whose 1-hour window hasn't fully elapsed yet — they get
+            # graded on the next hourly run once the window closes.
+            if end_et > now:
+                pending += 1
+                continue
 
             hi, lo = _fetch_window_extremes(ticker, start_et, end_et, bar_cache)
             hit = _hit(direction, target, hi, lo)
@@ -198,6 +219,7 @@ def validate_today_fib_hits(trade_date=None) -> dict:
         "hits": hits,
         "misses": misses,
         "unknown": unknown,
+        "pending": pending,   # windows not yet closed — graded on a later hourly run
     }
     log.info("Fib validation done: %s", summary)
     return summary

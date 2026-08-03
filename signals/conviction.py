@@ -38,7 +38,7 @@ from signals.base import Bias, SignalResult, TickerAnalysis
 #                      Candle  Vol   SMA   Gaps  Stoch  CCI  RoleRev  RS    VWAP  News
 # Learned by backtest/logistic_tuner.py (see module docstring). Do not hand-edit;
 # re-run `python -m backtest.logistic_tuner --apply` to refresh.
-WEIGHTS: List[float] = [0.88, 1.64, 1.67, 1.04, 0.93, 0.5, 1.32, 2.0, 1.06, 0.89]
+WEIGHTS: List[float] = [0.81, 1.93, 1.82, 0.99, 0.92, 0.5, 1.07, 2.0, 0.95, 0.97]
 MAX_WEIGHTED = sum(WEIGHTS)   # ≈ 11.9 (10 signals)
 
 # Import from __init__ to keep a single source of truth

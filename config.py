@@ -72,7 +72,9 @@ PERSONAL_WATCHLIST: list = [t.strip().upper() for t in _pw_raw.split(",") if t.s
 
 # ── Scan defaults ─────────────────────────────────────────────────────────────
 DEFAULT_UNIVERSE: str = _get("DEFAULT_UNIVERSE", "major_us_markets")
-MAX_TICKERS: int      = _int("MAX_TICKERS", 500)
+# major_us_markets = S&P 500 ∪ Nasdaq 100 ∪ Russell 1000 (~1,036 unique tickers).
+# Cap is set above the full union so every constituent is scanned by default.
+MAX_TICKERS: int      = _int("MAX_TICKERS", 1500)
 FMP_BATCH_SIZE: int   = _int("FMP_BATCH_SIZE", 5)
 REQUEST_DELAY_MS:    int  = _int("REQUEST_DELAY_MS", 120)
 ASYNC_FETCH_WORKERS: int  = _int("ASYNC_FETCH_WORKERS", 40)   # concurrent threads for bar fetch (ENH-06)

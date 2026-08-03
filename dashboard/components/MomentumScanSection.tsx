@@ -23,10 +23,10 @@ export default function MomentumScanSection({
       >
         <div className="scan-block-header-left">
           <span className="hour-pill">{group.et_time} ET</span>
-          {group.session && <span className="trade-tag">{group.session.toUpperCase()}</span>}
+          {group.mode && <span className="trade-tag">{group.mode.toUpperCase()}</span>}
           {!open && (
             <span className="scan-block-summary">
-              {group.trade.length} TRADE · {group.watch.length} WATCH
+              {group.longs.length} LONG · {group.shorts.length} SHORT
             </span>
           )}
         </div>
@@ -39,28 +39,32 @@ export default function MomentumScanSection({
         <div className="scan-block-body">
           <div className="section-header" style={{ marginTop: 0 }}>
             <span className="section-title">
-              {group.trade.length} TRADE · {group.watch.length} WATCH
+              {group.longs.length} LONG · {group.shorts.length} SHORT
               {group.universe ? ` · ${group.universe}` : ""}
             </span>
           </div>
 
-          {group.trade.length > 0 && (
+          {group.longs.length > 0 && (
             <>
-              <div className="section-title" style={{ marginBottom: 8 }}>TRADE</div>
+              <div className="section-title" style={{ marginBottom: 8 }}>
+                ▲ Top {group.longs.length} Longs
+              </div>
               <div className="picks-grid">
-                {group.trade.map((p) => (
-                  <MomentumPickCard key={`${p.scan_id}-trade-${p.ticker}`} pick={p} />
+                {group.longs.map((p) => (
+                  <MomentumPickCard key={`${p.scan_id}-long-${p.ticker}`} pick={p} />
                 ))}
               </div>
             </>
           )}
 
-          {group.watch.length > 0 && (
+          {group.shorts.length > 0 && (
             <>
-              <div className="section-title" style={{ margin: "12px 0 8px" }}>WATCH</div>
+              <div className="section-title" style={{ margin: "12px 0 8px" }}>
+                ▼ Top {group.shorts.length} Shorts
+              </div>
               <div className="picks-grid">
-                {group.watch.map((p) => (
-                  <MomentumPickCard key={`${p.scan_id}-watch-${p.ticker}`} pick={p} />
+                {group.shorts.map((p) => (
+                  <MomentumPickCard key={`${p.scan_id}-short-${p.ticker}`} pick={p} />
                 ))}
               </div>
             </>

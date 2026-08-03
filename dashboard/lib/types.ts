@@ -81,7 +81,8 @@ export interface ScanGroup {
   bears: PickRow[];
 }
 
-// ── Pre-Market Momentum Screener ─────────────────────────────────────────────
+// ── Daily Scanner (conviction + Fibonacci model, top 10 long / 10 short) ──────
+// Backed by the momentum_scans / momentum_picks tables (extended in db/schema.sql).
 
 export interface MomentumPickRow {
   trade_date: string;
@@ -89,15 +90,43 @@ export interface MomentumPickRow {
   et_hour: number;
   session: string | null;
   universe: string | null;
+  mode: string | null;               // "Daily"
   run_ts: string;
   scan_id: number;
   ticker: string;
   company: string | null;
   sector: string | null;
-  tier: "TRADE" | "WATCH" | "SKIP" | string;
-  rank: number | null;
+
+  // New conviction+Fib model
+  direction: "bull" | "bear" | string | null;
+  rank: number | null;               // 1-based within direction
+  net_score: number | null;          // raw −10…+10
+  conviction: number | null;         // conviction % (0–100)
+  grade: string | null;              // A+ / A / B / C / D
+  price: number | null;              // price at scan (9:15)
+  chg_pct: number | null;
+  analysis: string | null;
+  key_signals: string[] | null;
+  signals: Record<string, { bias: string; label: string }> | null;
+  phit: number | null;
+
+  // Fibonacci plan + whole-day (9:15 → 4 PM) target and hit result
+  fib_direction: string | null;
+  fib_entry: number | null;
+  fib_stop: number | null;
+  fib_t1: number | null;
+  fib_t2: number | null;
+  fib_t3: number | null;
+  day_target: number | null;
+  day_target_label: string | null;
+  target_hit: boolean | null;
+  day_high: number | null;
+  day_low: number | null;
+  validated_at: string | null;
+
+  // Legacy pre-market fields (kept for historical rows)
+  tier: "TRADE" | "WATCH" | "SKIP" | string | null;
   score: number | null;
-  conviction: number | null;
   pm_change_pct: number | null;
   pm_volume: number | null;
   pm_price: number | null;
@@ -113,9 +142,24 @@ export interface MomentumPickRow {
 
 export interface MomentumDaySummary {
   trade_date: string;
-  n_trade: number;
-  n_watch: number;
+  n_long: number;
+  n_short: number;
   et_time: string;
+}
+
+// One day's whole-day target hit-rate stats (from v_momentum_hit_stats).
+export interface MomentumHitStats {
+  trade_date: string;
+  n_picks: number;
+  n_long: number;
+  n_short: number;
+  validated: number;
+  hits: number;
+  misses: number;
+  long_validated: number;
+  long_hits: number;
+  short_validated: number;
+  short_hits: number;
 }
 
 export interface MomentumScanGroup {
@@ -124,8 +168,9 @@ export interface MomentumScanGroup {
   et_hour: number;
   session: string | null;
   universe: string | null;
-  trade: MomentumPickRow[];
-  watch: MomentumPickRow[];
+  mode: string | null;
+  longs: MomentumPickRow[];
+  shorts: MomentumPickRow[];
 }
 
 // ── Machine Learning ─────────────────────────────────────────────────────────
@@ -199,4 +244,71 @@ export interface FeatureDayCoverage {
   trade_date: string;
   labeled: number;
   hits: number;
+}
+
+// ── On-demand ticker analyzer (served by the FastAPI engine via /api/analyze) ──
+export interface AnalyzeSignal {
+  name: string;
+  bias: string; // "bull" | "bear" | "neutral"
+  label: string;
+  detail: string;
+}
+
+export interface AnalyzeConviction {
+  ticker: string;
+  raw_score: number;
+  weighted_score: number;
+  conviction_pct: number;
+  direction: string; // "LONG" | "SHORT" | "NEUTRAL"
+  grade: string;
+  analysis: string;
+  key_signals: string[];
+  conflicting: string[];
+}
+
+export interface AnalyzeFib {
+  direction: string | null;
+  anchor_type: string | null;
+  current_price: number | null;
+  swing_high: number | null;
+  swing_low: number | null;
+  entry_price: number | null;
+  entry_label: string;
+  stop_loss: number | null;
+  stop_label: string;
+  target_1: number | null;
+  target_1_label: string;
+  target_2: number | null;
+  target_3: number | null;
+  risk_reward_t1: number | null;
+  next_target: number | null; // projected ~1-hour target price
+  next_label: string;
+  support_1: number | null;
+  resistance_1: number | null;
+}
+
+// Raw payload from the FastAPI /api/signals/{ticker} endpoint.
+export interface AnalyzePayload {
+  ticker: string;
+  price: number;
+  chg_pct: number;
+  mode: string;
+  net_score: number;
+  verdict: string;
+  conviction: AnalyzeConviction;
+  signals: AnalyzeSignal[];
+  fib: AnalyzeFib | null;
+  as_of: string;
+}
+
+// One entry per requested ticker from the dashboard's /api/analyze proxy.
+export interface AnalyzeResult {
+  ticker: string;
+  data?: AnalyzePayload;
+  error?: string;
+}
+
+export interface AnalyzeResponse {
+  results: AnalyzeResult[];
+  api: string;
 }

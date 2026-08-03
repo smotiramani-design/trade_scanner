@@ -26,6 +26,10 @@ const SECTIONS = [
       { href: "/ml/data", label: "Training Data" },
     ],
   },
+  {
+    label: "On-Demand",
+    links: [{ href: "/analyze", label: "Analyze Ticker" }],
+  },
 ];
 
 function isActive(pathname: string, href: string) {

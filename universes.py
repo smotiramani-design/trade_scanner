@@ -4,29 +4,28 @@ universes.py — Complete, accurate ticker lists for all supported universes.
 Sources & counts (June 2026):
   S&P 500       : 503 tickers — github.com/datasets/s-and-p-500-companies
   Nasdaq 100    : 102 tickers — Wikipedia Nasdaq-100 (January 2026)
+  Russell 1000  : 1000 tickers — top US large caps by market cap (FMP snapshot).
+                                 See russell1000.py. FMP has no Russell endpoint,
+                                 so this is a top-1000-by-market-cap proxy.
   Dow Jones 30  : 30 tickers  — Yahoo Finance ^DJI components (June 2026)
   NYSE American : 101 tickers — StockAnalysis NYSE American list (June 2026),
                                 filtered to >$100M market cap with real revenue.
-                                Full 244-stock list has many micro-caps (<$10M
-                                market cap) and SPACs — excluded from scanning.
-  NYSE (main)   : All major NYSE-listed stocks already covered by S&P 500.
-                  Every DJIA stock + all large NYSE blue-chips are in SP500.
 
 major_us_markets
 ────────────────
-Union of S&P 500 + Nasdaq 100 + Dow Jones 30 + NYSE American.
-~560 unique, liquid, institutionally-traded US equities.
-FMP Ultimate plan fetches live constituent lists at runtime,
-keeping S&P 500 / Nasdaq 100 / Dow 30 current automatically.
+Union of S&P 500 + Nasdaq 100 + Russell 1000.
+~1,036 unique, liquid, institutionally-traded US equities.
+FMP Ultimate plan fetches live constituent lists at runtime (S&P 500 / Nasdaq
+100 via constituent endpoints, Russell 1000 via the company-screener proxy),
+falling back to the baked-in lists when live data is unavailable.
 
-About NYSE American (formerly AMEX):
-  - Second exchange under NYSE Group umbrella
-  - Lists ~244 stocks, mostly small/mid-cap companies
-  - Known for mining, energy, biotech smaller names
-  - Also lists structured products, ETFs (not included here — equities only)
-  - This list filters to stocks with >$100M market cap and real operations
+Dow Jones 30 and NYSE American remain available as their own named universes
+(dowjones / nyse_american) but are no longer part of major_us_markets.
+Every Dow 30 name is already inside the S&P 500 / Russell 1000 union.
 """
 from typing import Dict, List
+
+from russell1000 import RUSSELL1000
 
 
 def _dedup(lst: List[str]) -> List[str]:
@@ -233,11 +232,12 @@ NYSE_AMERICAN: List[str] = _dedup([
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Major US Markets — union of all four, deduplicated and sorted
-# This is the recommended default universe.
+# Major US Markets — union of S&P 500 + Nasdaq 100 + Russell 1000,
+# deduplicated and sorted. This is the recommended default universe.
+# ~1,036 unique large-cap US equities.
 # ─────────────────────────────────────────────────────────────────────────────
 MAJOR_US_MARKETS: List[str] = sorted(
-    set(SP500) | set(NDX100) | set(DOW30) | set(NYSE_AMERICAN)
+    set(SP500) | set(NDX100) | set(RUSSELL1000)
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -369,6 +369,7 @@ UNIVERSES: Dict[str, List[str]] = {
     "major_us_markets": MAJOR_US_MARKETS,
     "sp500":            SP500,
     "nasdaq100":        NDX100,
+    "russell1000":      RUSSELL1000,
     "dowjones":         DOW30,
     "nyse_american":    NYSE_AMERICAN,
     "watchlist":        WATCHLIST,

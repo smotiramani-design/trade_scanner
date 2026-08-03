@@ -4,8 +4,12 @@ lambda_function.py — AWS Lambda entry point for the Trading Signal Scanner.
 Schedule (America/New_York, Mon–Fri) — one EventBridge rule at the top of each hour:
   cron(0 10-16 ? * MON-FRI *)
 
-  10 AM, 11 AM, 12 PM, 1 PM, 2 PM, 3 PM  →  scan (+ trade at 10 AM, 12 PM, 2 PM)
-  4 PM  →  Fib target hit validation only (no scan, no trades)
+  10 AM                          →  scan (+ trade)
+  11 AM, 12 PM, 1 PM, 2 PM, 3 PM →  scan + hourly Fib target-hit validation
+                                    (each run grades the PRIOR hour's picks, so you
+                                     learn if last hour's target hit — not just at 4 PM)
+                                    (+ trade at 12 PM, 2 PM)
+  4 PM                           →  Fib validation + ML feature labeling (no scan)
 
 Optional `event` overrides (manual test invokes):
     {"force": true}      bypass holiday / schedule skip
@@ -56,9 +60,10 @@ from utils.holidays import is_market_holiday
 
 ET = ZoneInfo("America/New_York")
 
-# Session window for scheduled jobs (10:00 AM – 4:00 PM ET)
+# Session window for scheduled jobs (10:00 AM – 4:10 PM ET; the extra 10 min
+# covers the 4 PM Fib-validation grace window for cold starts that miss :00)
 SESSION_START_MIN = 10 * 60          # 10:00 AM
-SESSION_END_MIN   = 16 * 60          # 4:00 PM
+SESSION_END_MIN   = 16 * 60 + 10     # 4:10 PM
 
 # Hourly scans: 10 AM – 3 PM (top of hour)
 SCAN_START_HOUR = 10
@@ -67,24 +72,31 @@ SCAN_END_HOUR   = 15
 # Trades on the same top-of-hour run as the scan
 TRADE_HOURS = {10, 12, 14}   # 10 AM, 12 PM, 2 PM ET
 
-# End-of-day Fib validation: 4 PM only
-FIB_VALIDATION_HOUR = 16
+# Hourly Fib target-hit validation: 11 AM – 4 PM (top of hour). Starts one hour
+# after the first 10 AM scan so each run grades the prior hour's picks (10 AM picks
+# at 11 AM … 3 PM picks at 4 PM) instead of a single end-of-day 4 PM sweep.
+FIB_START_HOUR = 11
+FIB_END_HOUR   = 16   # 4 PM close — also runs the once-a-day ML feature labeling
 
 log = logging.getLogger(__name__)
 
 
-def _run_kind(now_et: datetime) -> str:
-    """Return 'fib' | 'scan' | 'skip' based on ET clock."""
-    h = now_et.hour
-    m = now_et.minute
-    # 4 PM fib job — allow first 10 min (cold starts often miss exactly :00)
-    if h == FIB_VALIDATION_HOUR and m < 10:
-        return "fib"
-    if m != 0:
-        return "skip"
-    if SCAN_START_HOUR <= h <= SCAN_END_HOUR:
-        return "scan"
-    return "skip"
+def _scheduled_jobs(now_et: datetime) -> "tuple[bool, bool]":
+    """
+    Return (do_scan, do_fib) for the current ET clock.
+
+      10 AM             → scan
+      11 AM – 3 PM      → scan + hourly Fib validation
+      4 PM              → Fib validation (+ ML feature labeling)
+
+    The 4 PM slot gets a 10-minute grace window because cold starts often miss :00.
+    """
+    h, m = now_et.hour, now_et.minute
+    on_the_hour = (m == 0)
+    do_scan = on_the_hour and (SCAN_START_HOUR <= h <= SCAN_END_HOUR)
+    do_fib = (on_the_hour and FIB_START_HOUR <= h <= FIB_END_HOUR) or \
+             (h == FIB_END_HOUR and m < 10)
+    return do_scan, do_fib
 
 
 def _in_session_window(now_et: datetime) -> bool:
@@ -181,17 +193,17 @@ def lambda_handler(event, context):
     forced_mode = event.get("mode")
 
     if forced_mode == "fib":
-        kind = "fib"
+        do_scan, do_fib = False, True
     elif forced_mode in ("scan", "trade"):
-        kind = "scan"
+        do_scan, do_fib = True, False
     else:
-        kind = _run_kind(now_et)
+        do_scan, do_fib = _scheduled_jobs(now_et)
 
     if not force:
         if is_market_holiday(now_et.date()):
             log.info("NYSE holiday (%s) — skipping.", now_et.date())
             return {"status": "skipped", "reason": "holiday", "et": now_et.isoformat()}
-        if kind == "skip":
+        if not (do_scan or do_fib):
             log.info("Not a scheduled run slot (%s ET) — skipping.", now_et.strftime("%H:%M"))
             return {"status": "skipped", "reason": "not_scheduled",
                     "et": now_et.isoformat()}
@@ -200,31 +212,41 @@ def lambda_handler(event, context):
             return {"status": "skipped", "reason": "outside_session",
                     "et": now_et.isoformat()}
 
-    log.info("Run start: %s ET · kind=%s · force=%s",
-             now_et.strftime("%Y-%m-%d %H:%M"), kind, force)
+    log.info("Run start: %s ET · scan=%s · fib=%s · force=%s",
+             now_et.strftime("%Y-%m-%d %H:%M"), do_scan, do_fib, force)
 
-    if kind == "fib":
+    result = {"status": "ok", "et": now_et.isoformat()}
+    ran = []
+
+    # Fib validation first: it's quick and delivers the hourly "did last hour's
+    # target hit?" feedback even if the heavier scan runs long or times out.
+    if do_fib:
         from utils.fib_validation import (
             validate_today_fib_hits, validate_today_feature_hits,
         )
-        result = validate_today_fib_hits(now_et.date())
-        # ENH-ML-02: also label the full scanned universe for de-biased training.
-        if config.LOG_UNIVERSE:
+        fib_res = validate_today_fib_hits(now_et.date(), now=now_et)
+        # ENH-ML-02: label the full scanned universe once per day at the 4 PM close
+        # (kept out of the hourly runs so they stay light and fast).
+        if config.LOG_UNIVERSE and now_et.hour == FIB_END_HOUR:
             try:
-                result["features"] = validate_today_feature_hits(now_et.date())
+                fib_res["features"] = validate_today_feature_hits(now_et.date())
             except Exception:
                 log.exception("Feature validation failed (non-fatal).")
-        result["et"] = now_et.isoformat()
-        result["mode"] = "fib"
-        return result
+        result["fib"] = fib_res
+        ran.append("fib")
 
-    if forced_mode == "trade":
-        do_trade = True
-    elif forced_mode == "scan":
-        do_trade = bool(event.get("trade", False))
-    else:
-        do_trade = _should_trade(now_et, event)
-    return _run_scan_and_maybe_trade(now_et, event, do_trade)
+    if do_scan:
+        if forced_mode == "trade":
+            do_trade = True
+        elif forced_mode == "scan":
+            do_trade = bool(event.get("trade", False))
+        else:
+            do_trade = _should_trade(now_et, event)
+        result["scan"] = _run_scan_and_maybe_trade(now_et, event, do_trade)
+        ran.append("trade" if do_trade else "scan")
+
+    result["mode"] = "+".join(ran) if ran else "skip"
+    return result
 
 
 if __name__ == "__main__":

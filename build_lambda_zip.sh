@@ -51,10 +51,13 @@ python3 -m pip install \
 
 # ── 2. Project source code ────────────────────────────────────────────────────
 echo "▶ Copying project source ..."
-SRC_FILES=(lambda_function.py config.py scanner.py universes.py)
+# lambda_function.py → intraday handler; daily_main.py + daily/ → the daily
+# scanner handler (daily.run.lambda_handler). One zip serves BOTH Lambdas; only
+# the configured handler differs per function.
+SRC_FILES=(lambda_function.py daily_main.py config.py scanner.py universes.py)
 # models/ ships the trained P(hit) model so the scanner can rank by predicted
 # probability in production; backtest/ ships so retraining tools are available.
-SRC_DIRS=(signals data trading utils db models backtest)
+SRC_DIRS=(signals data trading utils db models backtest daily)
 for f in "${SRC_FILES[@]}"; do cp "$f" "$PKG/"; done
 for d in "${SRC_DIRS[@]}"; do
   rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='*copy.py' "$d" "$PKG/"
@@ -72,5 +75,7 @@ echo "▶ Zipping ..."
 
 SIZE=$(du -h "$ZIP" | cut -f1)
 echo "✔ Built $ZIP  ($SIZE)"
-echo "  Handler:  lambda_function.lambda_handler"
+echo "  One artifact, two Lambdas — set the handler per function:"
+echo "    trade-scanner            → lambda_function.lambda_handler   (intraday)"
+echo "    momentum-stock-screener  → daily.run.lambda_handler         (daily)"
 echo "  If >50MB, upload via S3 (see header of this script)."

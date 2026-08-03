@@ -18,6 +18,7 @@ from data.fmp_client import (
     get_market_session, MarketSession, FMPError,
     get_company_names, get_sector_map,
     get_sp500_constituents, get_nasdaq100_constituents, get_dowjones_constituents,
+    get_russell1000_constituents,
 )
 from data.yahoo_client import get_bars, is_market_open, Bar
 from signals import run_all
@@ -36,21 +37,29 @@ def resolve_universe(
     tickers: List[str] = []
 
     if universe == "major_us_markets":
+        # S&P 500 ∪ Nasdaq 100 ∪ Russell 1000 (Russell = top US large-cap proxy).
         if live_index:
-            sp  = get_sp500_constituents()
-            ndx = get_nasdaq100_constituents()
-            dj  = get_dowjones_constituents()
-            if sp or ndx or dj:
-                seen, merged = set(), []
-                for t in sp + ndx + dj:
-                    if t not in seen:
-                        seen.add(t)
-                        merged.append(t)
-                tickers = sorted(merged)
+            sp   = get_sp500_constituents()
+            ndx  = get_nasdaq100_constituents()
+            r1k  = get_russell1000_constituents()
+            if sp or ndx or r1k:
+                # Any list that came back empty (plan restriction / failure)
+                # falls back to its baked-in snapshot so the union stays complete.
+                sp  = sp  or get_tickers("sp500", 0)
+                ndx = ndx or get_tickers("nasdaq100", 0)
+                r1k = r1k or get_tickers("russell1000", 0)
+                tickers = sorted(set(sp) | set(ndx) | set(r1k))
                 log.info("major_us_markets (live): %d unique tickers", len(tickers))
         if not tickers:
             tickers = list(MAJOR_US_MARKETS)
             log.info("major_us_markets (built-in): %d unique tickers", len(tickers))
+
+    elif universe == "russell1000":
+        if live_index:
+            tickers = get_russell1000_constituents()
+        if not tickers:
+            tickers = get_tickers("russell1000", 0)
+            log.info("russell1000 (built-in): %d tickers", len(tickers))
 
     elif universe in ("sp500", "nasdaq100", "dowjones"):
         if live_index:

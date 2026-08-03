@@ -39,7 +39,7 @@ export default async function MomentumHistoryPage() {
             >
               <div className="day-date">{d.trade_date}</div>
               <div className="day-meta">
-                {d.n_trade} TRADE · {d.n_watch} WATCH · {d.et_time} ET
+                {d.n_long} LONG · {d.n_short} SHORT · {d.et_time} ET
               </div>
             </Link>
           ))}

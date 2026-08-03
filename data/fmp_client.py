@@ -27,6 +27,7 @@ Endpoint map (all /stable/ base):
   /stable/sp500-constituent           — S&P 500 constituent list (paid plan)
   /stable/nasdaq-constituent          — Nasdaq 100 constituent list (paid plan)
   /stable/dowjones-constituent        — Dow Jones constituent list (paid plan)
+  /stable/company-screener            — Russell 1000 proxy (top 1000 US large caps)
 """
 import logging
 import time
@@ -552,6 +553,60 @@ def _fetch_constituent(path: str, label: str) -> List[str]:
 def get_sp500_constituents()     -> List[str]: return _fetch_constituent("sp500-constituent",    "S&P 500")
 def get_nasdaq100_constituents() -> List[str]: return _fetch_constituent("nasdaq-constituent",   "Nasdaq 100")
 def get_dowjones_constituents()  -> List[str]: return _fetch_constituent("dowjones-constituent", "Dow Jones")
+
+
+def get_russell1000_constituents(limit: int = 1000) -> List[str]:
+    """
+    Russell 1000 proxy — FMP exposes no Russell constituent endpoint, so this
+    returns the top `limit` US-domiciled common stocks (NYSE + Nasdaq) by market
+    cap via /stable/company-screener. Excludes ETFs/funds. Ranked large→small,
+    so the result approximates the Russell 1000 large-cap universe.
+
+    Returns [] on any failure or plan restriction — callers fall back to the
+    baked-in russell1000.RUSSELL1000 snapshot.
+    """
+    import re
+    try:
+        resp = _SESSION.get(
+            f"{BASE}/company-screener",
+            params={
+                "marketCapMoreThan":  1_500_000_000,
+                "isEtf":              "false",
+                "isFund":             "false",
+                "isActivelyTrading":  "true",
+                "exchange":           "NASDAQ,NYSE",
+                "country":            "US",
+                "limit":              6000,
+                "apikey":             config.FMP_API_KEY,
+            },
+            timeout=30,
+        )
+        if resp.status_code in _PLAN_RESTRICTED:
+            log.debug("Russell 1000 screener: plan restriction — using built-in")
+            return []
+        resp.raise_for_status()
+        rows = [r for r in resp.json()
+                if isinstance(r, dict) and isinstance(r.get("marketCap"), (int, float))
+                and r.get("symbol")]
+        rows.sort(key=lambda r: r["marketCap"], reverse=True)
+
+        seen: set = set()
+        out:  List[str] = []
+        for r in rows:
+            sym = str(r["symbol"]).strip().upper()
+            if re.search(r"(\.WS|\.U|\.R\b|/)", sym):   # skip warrants/units/rights
+                continue
+            if sym and sym not in seen:
+                seen.add(sym)
+                out.append(sym)
+            if len(out) >= limit:
+                break
+        if out:
+            log.info("Live Russell 1000 proxy: %d tickers (top US large caps)", len(out))
+        return out
+    except Exception as e:
+        log.debug("Russell 1000 screener fetch failed (%s) — using built-in", e)
+        return []
 
 
 # ── Company name lookup ───────────────────────────────────────────────────────

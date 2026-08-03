@@ -1,0 +1,75 @@
+import { NextRequest, NextResponse } from "next/server";
+import type { AnalyzeResult } from "@/lib/types";
+
+// The Python engine (FastAPI) runs the live scan. Point this at wherever
+// `uvicorn web.api:app` is served. Defaults to the local dev server.
+const API_BASE = process.env.SCANNER_API_URL ?? "http://localhost:8000";
+
+// Always run live — never cache on-demand analyses.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const MAX_TICKERS = 10;
+
+export async function GET(req: NextRequest) {
+  const raw = req.nextUrl.searchParams.get("tickers") ?? "";
+
+  const tickers = Array.from(
+    new Set(
+      raw
+        .split(/[\s,]+/)
+        .map((t) => t.trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ).slice(0, MAX_TICKERS);
+
+  if (tickers.length === 0) {
+    return NextResponse.json(
+      { error: "Enter at least one ticker (e.g. AAPL, NVDA)." },
+      { status: 400 }
+    );
+  }
+
+  const results: AnalyzeResult[] = await Promise.all(
+    tickers.map(async (ticker): Promise<AnalyzeResult> => {
+      try {
+        const url = `${API_BASE}/api/signals/${encodeURIComponent(
+          ticker
+        )}?hourly=true`;
+        const r = await fetch(url, { cache: "no-store" });
+
+        if (!r.ok) {
+          let detail = "";
+          try {
+            const body = await r.json();
+            detail = body?.detail ?? "";
+          } catch {
+            detail = await r.text().catch(() => "");
+          }
+          return {
+            ticker,
+            error:
+              r.status === 404
+                ? detail || `No data for ${ticker}.`
+                : `Engine error (HTTP ${r.status})${
+                    detail ? `: ${String(detail).slice(0, 160)}` : ""
+                  }`,
+          };
+        }
+
+        const data = await r.json();
+        return { ticker, data };
+      } catch (e) {
+        return {
+          ticker,
+          error:
+            `Could not reach the scanner engine at ${API_BASE}. ` +
+            `Start it with: uvicorn web.api:app --port 8000` +
+            (e instanceof Error ? ` (${e.message})` : ""),
+        };
+      }
+    })
+  );
+
+  return NextResponse.json({ results, api: API_BASE });
+}

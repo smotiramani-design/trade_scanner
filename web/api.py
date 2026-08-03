@@ -81,26 +81,41 @@ def _serialise_gamma(gd) -> dict | None:
     }
 
 
+def _serialise_fib(f) -> dict | None:
+    """Serialise a FibLevels object to a JSON-safe dict (matches signals/fibonacci.py)."""
+    if not f:
+        return None
+    return {
+        "direction":      getattr(f, "direction", None),
+        "anchor_type":    getattr(f, "anchor_type", None),
+        "current_price":  getattr(f, "current_price", None),
+        "swing_high":     getattr(f, "swing_high", None),
+        "swing_low":      getattr(f, "swing_low", None),
+        "entry_price":    getattr(f, "entry_price", None),
+        "entry_label":    getattr(f, "entry_label", ""),
+        "stop_loss":      getattr(f, "stop_loss", None),
+        "stop_label":     getattr(f, "stop_label", ""),
+        "target_1":       getattr(f, "target_1", None),
+        "target_1_label": getattr(f, "target_1_label", ""),
+        "target_2":       getattr(f, "target_2", None),
+        "target_3":       getattr(f, "target_3", None),
+        "risk_reward_t1": getattr(f, "risk_reward_t1", None),
+        # The primary take-profit on the correct side of price — this is the
+        # "next one hour" target price when computed on Hourly bars.
+        "next_target":    getattr(f, "next_hour_target", None),
+        "next_label":     getattr(f, "next_hour_label", ""),
+        "support_1":      getattr(f, "support_1", None),
+        "resistance_1":   getattr(f, "resistance_1", None),
+    }
+
+
 def _serialise_ta(ta) -> Dict:
     """Convert TickerAnalysis to JSON-safe dict."""
     sigs = [
         {"name": s.name, "bias": s.bias.value, "label": s.label, "detail": s.detail}
         for s in ta.signals
     ]
-    fib = None
-    if ta.fib:
-        f = ta.fib
-        fib = {
-            "direction":   getattr(f, "direction",   None),
-            "anchor_high": getattr(f, "anchor_high", None),
-            "anchor_low":  getattr(f, "anchor_low",  None),
-            "entry_price": getattr(f, "entry_price", None),
-            "stop_loss":   getattr(f, "stop_loss",   None),
-            "target_1":    getattr(f, "target_1",    None),
-            "target_2":    getattr(f, "target_2",    None),
-            "target_3":    getattr(f, "target_3",    None),
-            "rr_t1":       getattr(f, "rr_t1",       None),
-        }
+    fib = _serialise_fib(ta.fib)
     return {
         "ticker":        ta.ticker,
         "company_name":  ta.company_name,
@@ -316,7 +331,14 @@ def get_performance():
 
 @app.get("/api/signals/{ticker}")
 def get_signals_for_ticker(ticker: str, hourly: bool = Query(default=False)):
-    """Run signals for a single ticker on demand and return results."""
+    """
+    Run the full engine for a single ticker on demand.
+
+    Returns the 10 signals + conviction + a Fibonacci plan. With hourly=true the
+    Fib is computed on Hourly bars, so `fib.next_target` is the projected target
+    price for roughly the next hour from now. Matches the intraday scanner: SPY
+    bars are fetched so the (top-weighted) Relative-Strength signal is accurate.
+    """
     try:
         from data.yahoo_client import get_bars
         from signals import run_all, SIG_NAMES
@@ -324,31 +346,47 @@ def get_signals_for_ticker(ticker: str, hourly: bool = Query(default=False)):
         from signals.base import TickerAnalysis
         from signals.fibonacci import compute_fibonacci
 
-        bars = get_bars(ticker.upper(), market_open=hourly)
+        sym = ticker.upper().strip()
+        bars = get_bars(sym, market_open=hourly)
         if len(bars) < 30:
-            raise HTTPException(status_code=404, detail=f"Insufficient bars for {ticker}")
+            raise HTTPException(status_code=404,
+                                detail=f"Insufficient price history for {sym}")
 
-        sigs = run_all(bars, ticker=ticker.upper())
-        ta   = TickerAnalysis(
-            ticker=ticker.upper(), price=bars[-1].close,
-            chg_pct=0, volume=bars[-1].volume, bars=len(bars),
-            mode="Hourly" if hourly else "Daily",
-            signals=sigs,
+        # SPY benchmark for the Relative-Strength signal (best-effort).
+        try:
+            spy_bars = get_bars("SPY", market_open=hourly)
+        except Exception:
+            spy_bars = None
+
+        mode = "Hourly" if hourly else "Daily"
+        sigs = run_all(bars, spy_bars=spy_bars, mode=mode, ticker=sym)
+
+        prev = bars[-2].close if len(bars) >= 2 and bars[-2].close else bars[-1].close
+        chg = round((bars[-1].close / prev - 1.0) * 100, 2) if prev else 0.0
+
+        ta = TickerAnalysis(
+            ticker=sym, price=bars[-1].close,
+            chg_pct=chg, volume=bars[-1].volume, bars=len(bars),
+            mode=mode, signals=sigs,
         )
         trade_dir = direction_from_signals(sigs)
         ta.fib = compute_fibonacci(
-            ticker, bars, bars[-1].close, ta.net_score, direction=trade_dir,
+            sym, bars, bars[-1].close, ta.net_score, direction=trade_dir,
         )
         cs = score_conviction(ta)
 
         return {
-            "ticker":     ticker.upper(),
-            "price":      bars[-1].close,
+            "ticker":     sym,
+            "price":      round(bars[-1].close, 2),
+            "chg_pct":    chg,
+            "mode":       mode,
             "net_score":  ta.net_score,
+            "verdict":    ta.verdict,
             "conviction": _serialise_cs(cs),
             "signals":    [{"name": n, "bias": s.bias.value, "label": s.label, "detail": s.detail}
                            for n, s in zip(SIG_NAMES, sigs)],
-            "fib":        _serialise_ta(ta)["fib"],
+            "fib":        _serialise_fib(ta.fib),
+            "as_of":      datetime.now().isoformat(),
         }
     except HTTPException:
         raise
