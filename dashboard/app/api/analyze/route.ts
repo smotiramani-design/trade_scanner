@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { AnalyzeResult } from "@/lib/types";
 
-// The Python engine (FastAPI) runs the live scan. Point this at wherever
-// `uvicorn web.api:app` is served. Defaults to the local dev server.
-const API_BASE = process.env.SCANNER_API_URL ?? "http://localhost:8000";
+// The Python engine runs the live scan. Point this at either a local
+// `uvicorn web.api:app` server or the AWS Lambda Function URL. Defaults to the
+// local dev server. Trailing slash stripped so Function URLs work as-is.
+const API_BASE = (process.env.SCANNER_API_URL ?? "http://localhost:8000").replace(
+  /\/+$/,
+  ""
+);
 
 // Always run live — never cache on-demand analyses.
 export const dynamic = "force-dynamic";

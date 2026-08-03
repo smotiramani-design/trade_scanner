@@ -40,6 +40,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
+from utils.analyze import (
+    analyze_ticker,
+    serialise_fib as _serialise_fib,
+    serialise_conviction as _serialise_cs,
+    InsufficientData,
+)
 
 log = logging.getLogger(__name__)
 
@@ -81,34 +87,6 @@ def _serialise_gamma(gd) -> dict | None:
     }
 
 
-def _serialise_fib(f) -> dict | None:
-    """Serialise a FibLevels object to a JSON-safe dict (matches signals/fibonacci.py)."""
-    if not f:
-        return None
-    return {
-        "direction":      getattr(f, "direction", None),
-        "anchor_type":    getattr(f, "anchor_type", None),
-        "current_price":  getattr(f, "current_price", None),
-        "swing_high":     getattr(f, "swing_high", None),
-        "swing_low":      getattr(f, "swing_low", None),
-        "entry_price":    getattr(f, "entry_price", None),
-        "entry_label":    getattr(f, "entry_label", ""),
-        "stop_loss":      getattr(f, "stop_loss", None),
-        "stop_label":     getattr(f, "stop_label", ""),
-        "target_1":       getattr(f, "target_1", None),
-        "target_1_label": getattr(f, "target_1_label", ""),
-        "target_2":       getattr(f, "target_2", None),
-        "target_3":       getattr(f, "target_3", None),
-        "risk_reward_t1": getattr(f, "risk_reward_t1", None),
-        # The primary take-profit on the correct side of price — this is the
-        # "next one hour" target price when computed on Hourly bars.
-        "next_target":    getattr(f, "next_hour_target", None),
-        "next_label":     getattr(f, "next_hour_label", ""),
-        "support_1":      getattr(f, "support_1", None),
-        "resistance_1":   getattr(f, "resistance_1", None),
-    }
-
-
 def _serialise_ta(ta) -> Dict:
     """Convert TickerAnalysis to JSON-safe dict."""
     sigs = [
@@ -135,21 +113,6 @@ def _serialise_ta(ta) -> Dict:
         "mtf_detail":    getattr(ta, "mtf_detail",    ""),
         "earnings_soon": getattr(ta, "earnings_soon", False),
         "gamma":         _serialise_gamma(getattr(ta, "gamma_data", None)),
-    }
-
-
-def _serialise_cs(cs) -> Dict:
-    """Convert ConvictionScore to JSON-safe dict."""
-    return {
-        "ticker":          cs.ticker,
-        "raw_score":       cs.raw_score,
-        "weighted_score":  cs.weighted_score,
-        "conviction_pct":  cs.conviction_pct,
-        "direction":       cs.direction,
-        "grade":           cs.grade,
-        "analysis":        cs.analysis,
-        "key_signals":     cs.key_signals,
-        "conflicting":     cs.conflicting,
     }
 
 
@@ -336,60 +299,13 @@ def get_signals_for_ticker(ticker: str, hourly: bool = Query(default=False)):
 
     Returns the 10 signals + conviction + a Fibonacci plan. With hourly=true the
     Fib is computed on Hourly bars, so `fib.next_target` is the projected target
-    price for roughly the next hour from now. Matches the intraday scanner: SPY
-    bars are fetched so the (top-weighted) Relative-Strength signal is accurate.
+    price for roughly the next hour from now. Shared implementation lives in
+    utils.analyze so the Lambda Function URL handler behaves identically.
     """
     try:
-        from data.yahoo_client import get_bars
-        from signals import run_all, SIG_NAMES
-        from signals.conviction import direction_from_signals, score_conviction
-        from signals.base import TickerAnalysis
-        from signals.fibonacci import compute_fibonacci
-
-        sym = ticker.upper().strip()
-        bars = get_bars(sym, market_open=hourly)
-        if len(bars) < 30:
-            raise HTTPException(status_code=404,
-                                detail=f"Insufficient price history for {sym}")
-
-        # SPY benchmark for the Relative-Strength signal (best-effort).
-        try:
-            spy_bars = get_bars("SPY", market_open=hourly)
-        except Exception:
-            spy_bars = None
-
-        mode = "Hourly" if hourly else "Daily"
-        sigs = run_all(bars, spy_bars=spy_bars, mode=mode, ticker=sym)
-
-        prev = bars[-2].close if len(bars) >= 2 and bars[-2].close else bars[-1].close
-        chg = round((bars[-1].close / prev - 1.0) * 100, 2) if prev else 0.0
-
-        ta = TickerAnalysis(
-            ticker=sym, price=bars[-1].close,
-            chg_pct=chg, volume=bars[-1].volume, bars=len(bars),
-            mode=mode, signals=sigs,
-        )
-        trade_dir = direction_from_signals(sigs)
-        ta.fib = compute_fibonacci(
-            sym, bars, bars[-1].close, ta.net_score, direction=trade_dir,
-        )
-        cs = score_conviction(ta)
-
-        return {
-            "ticker":     sym,
-            "price":      round(bars[-1].close, 2),
-            "chg_pct":    chg,
-            "mode":       mode,
-            "net_score":  ta.net_score,
-            "verdict":    ta.verdict,
-            "conviction": _serialise_cs(cs),
-            "signals":    [{"name": n, "bias": s.bias.value, "label": s.label, "detail": s.detail}
-                           for n, s in zip(SIG_NAMES, sigs)],
-            "fib":        _serialise_fib(ta.fib),
-            "as_of":      datetime.now().isoformat(),
-        }
-    except HTTPException:
-        raise
+        return analyze_ticker(ticker, hourly=hourly)
+    except InsufficientData as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
