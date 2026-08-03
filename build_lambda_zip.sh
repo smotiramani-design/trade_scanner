@@ -54,7 +54,7 @@ echo "▶ Copying project source ..."
 # lambda_function.py → intraday handler; daily_main.py + daily/ → the daily
 # scanner handler (daily.run.lambda_handler). One zip serves BOTH Lambdas; only
 # the configured handler differs per function.
-SRC_FILES=(lambda_function.py daily_main.py analyze_lambda.py config.py scanner.py universes.py)
+SRC_FILES=(lambda_function.py daily_main.py analyze_lambda.py config.py scanner.py universes.py russell1000.py)
 # models/ ships the trained P(hit) model so the scanner can rank by predicted
 # probability in production; backtest/ ships so retraining tools are available.
 SRC_DIRS=(signals data trading utils db models backtest daily)
