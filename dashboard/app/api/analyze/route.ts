@@ -9,6 +9,10 @@ const API_BASE = (process.env.SCANNER_API_URL ?? "http://localhost:8000").replac
   ""
 );
 
+// Shared secret for the public Lambda Function URL. Sent server-side only, so
+// it never reaches the browser. Must match ANALYZE_API_TOKEN on the Lambda.
+const API_TOKEN = (process.env.ANALYZE_API_TOKEN ?? "").trim();
+
 // Always run live — never cache on-demand analyses.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -40,7 +44,10 @@ export async function GET(req: NextRequest) {
         const url = `${API_BASE}/api/signals/${encodeURIComponent(
           ticker
         )}?hourly=true`;
-        const r = await fetch(url, { cache: "no-store" });
+        const r = await fetch(url, {
+          cache: "no-store",
+          headers: API_TOKEN ? { "x-api-token": API_TOKEN } : undefined,
+        });
 
         if (!r.ok) {
           let detail = "";

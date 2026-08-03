@@ -20,12 +20,22 @@ Deploy
        SCANNER_API_URL = https://<id>.lambda-url.<region>.on.aws
    (no trailing slash needed; the proxy strips it)
 
+Locking it down (recommended, since Auth type is NONE)
+------------------------------------------------------
+Set a shared secret so only your dashboard can call it:
+  • On this Lambda:  ANALYZE_API_TOKEN = <some-long-random-string>
+  • In Vercel:       ANALYZE_API_TOKEN = <same-string>
+The dashboard proxy sends it as the `x-api-token` header; requests without it
+get 401. If ANALYZE_API_TOKEN is unset, the endpoint stays open.
+
 The dashboard then calls:  {SCANNER_API_URL}/api/signals/{TICKER}?hourly=true
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 
 log = logging.getLogger()
 if not log.handlers:
@@ -55,6 +65,21 @@ def _extract(event: dict):
     return method, path, qs
 
 
+def _authorized(event: dict, qs: dict) -> bool:
+    """
+    Shared-secret gate. If ANALYZE_API_TOKEN is set on the function, callers must
+    present the same value via the `x-api-token` header (preferred) or `?token=`.
+    If the env var is unset, the endpoint stays open (dev / local FastAPI parity).
+    """
+    expected = (os.environ.get("ANALYZE_API_TOKEN") or "").strip()
+    if not expected:
+        return True
+
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    provided = (headers.get("x-api-token") or qs.get("token") or "").strip()
+    return bool(provided) and hmac.compare_digest(provided, expected)
+
+
 def handler(event=None, context=None) -> dict:
     event = event or {}
     method, path, qs = _extract(event)
@@ -74,6 +99,9 @@ def handler(event=None, context=None) -> dict:
 
     if not ticker:
         return _resp(400, {"detail": "Provide a ticker: /api/signals/{TICKER}?hourly=true"})
+
+    if not _authorized(event, qs):
+        return _resp(401, {"detail": "Unauthorized"})
 
     hourly = str(qs.get("hourly", "false")).lower() in ("1", "true", "yes")
 
