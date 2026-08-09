@@ -6,7 +6,10 @@ import type {
   AnalyzeResult,
   AnalyzePayload,
   AnalyzeFib,
+  AnalyzeSignal,
 } from "@/lib/types";
+import { SIGNAL_ORDER, type SignalChip, type SignalBias } from "@/lib/signals";
+import SignalChips from "@/components/SignalChips";
 
 function fmt(n: number | null | undefined, dp = 2): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
@@ -23,16 +26,26 @@ function biasClass(bias: string): string {
   return "neutral";
 }
 
-function biasArrow(bias: string): string {
-  const c = biasClass(bias);
-  return c === "bull" ? "▲" : c === "bear" ? "▼" : "—";
-}
-
 function dirClass(dir: string): string {
   const d = dir.toUpperCase();
   if (d.includes("LONG") || d.includes("BULL")) return "bull";
   if (d.includes("SHORT") || d.includes("BEAR")) return "bear";
   return "neutral";
+}
+
+function toSignalChips(signals: AnalyzeSignal[]): SignalChip[] {
+  const byName = new Map(
+    signals.map((s) => [s.name, s] as const)
+  );
+  const ordered = SIGNAL_ORDER.filter((name) => byName.has(name));
+  const rest = signals
+    .map((s) => s.name)
+    .filter((name) => !SIGNAL_ORDER.includes(name as (typeof SIGNAL_ORDER)[number]));
+  return [...ordered, ...rest].map((name) => {
+    const s = byName.get(name)!;
+    const bias = biasClass(s.bias) as SignalBias;
+    return { name, bias, label: s.label || s.detail || "" };
+  });
 }
 
 function TargetBlock({ fib, price }: { fib: AnalyzeFib | null; price: number }) {
@@ -83,6 +96,7 @@ function ResultCard({ data }: { data: AnalyzePayload }) {
   const cs = data.conviction;
   const dcls = dirClass(cs?.direction ?? "NEUTRAL");
   const chgUp = (data.chg_pct ?? 0) >= 0;
+  const signalChips = toSignalChips(data.signals ?? []);
   return (
     <div className="analyze-card">
       <div className="ac-head">
@@ -125,24 +139,12 @@ function ResultCard({ data }: { data: AnalyzePayload }) {
         </div>
       </div>
 
-      <TargetBlock fib={data.fib} price={data.price} />
+      {data.verdict && <div className="verdict-line">{data.verdict}</div>}
 
-      <div className="sig-section-title">10 Signals</div>
-      <div className="sig-list">
-        {data.signals.map((s) => {
-          const c = biasClass(s.bias);
-          return (
-            <div className="sig-row" key={s.name}>
-              <span className="sig-name">{s.name}</span>
-              <span className={`sig-val ${c}`} title={s.detail}>
-                {biasArrow(s.bias)} {s.label}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      <SignalChips signals={signalChips} />
 
-      {cs?.analysis && <div className="ac-analysis">{cs.analysis}</div>}
+      {cs?.analysis && <div className="analysis-text">{cs.analysis}</div>}
+
       {cs?.key_signals && cs.key_signals.length > 0 && (
         <div className="ac-keysig">
           {cs.key_signals.map((k, i) => (
@@ -152,6 +154,15 @@ function ResultCard({ data }: { data: AnalyzePayload }) {
           ))}
         </div>
       )}
+
+      {cs?.conflicting && cs.conflicting.length > 0 && (
+        <div className="conflict-flag">
+          ⚠ Conflicting: {cs.conflicting.join(", ")}
+        </div>
+      )}
+
+      <TargetBlock fib={data.fib} price={data.price} />
+
       <div className="ac-asof">as of {new Date(data.as_of).toLocaleString()}</div>
     </div>
   );
@@ -195,7 +206,7 @@ export default function AnalyzePage() {
           <div className="page-title">Analyze Ticker</div>
           <div className="page-sub">
             Enter any ticker(s) to run the live engine — 10 signals, conviction,
-            and a Fibonacci target for roughly the next hour.
+            notes, and a Fibonacci target for roughly the next hour.
           </div>
         </div>
       </div>

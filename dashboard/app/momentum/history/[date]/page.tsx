@@ -1,9 +1,30 @@
 import Link from "next/link";
 import { getMomentumDayPicks, groupMomentumByScan } from "@/lib/momentum-queries";
 import MomentumScanSection from "@/components/MomentumScanSection";
-import type { MomentumPickRow } from "@/lib/types";
+import FibHitSummary from "@/components/FibHitSummary";
+import type { MomentumPickRow, FibHitStats } from "@/lib/types";
 
 export const revalidate = 60;
+
+function hitStatsFromPicks(picks: MomentumPickRow[]): FibHitStats | null {
+  const withTarget = picks.filter((p) => p.day_target != null);
+  if (withTarget.length === 0) return null;
+  const validatedRows = withTarget.filter((p) => p.target_hit != null);
+  if (validatedRows.length === 0) return null;
+  const hits = validatedRows.filter((p) => p.target_hit === true).length;
+  const misses = validatedRows.filter((p) => p.target_hit === false).length;
+  const unknown = withTarget.length - validatedRows.length;
+  return {
+    hits,
+    misses,
+    unknown,
+    validated: validatedRows.length,
+    with_target: withTarget.length,
+    hit_pct: validatedRows.length
+      ? Math.round((hits / validatedRows.length) * 1000) / 10
+      : 0,
+  };
+}
 
 export default async function MomentumDayPage({ params }: { params: { date: string } }) {
   const { date } = params;
@@ -16,6 +37,7 @@ export default async function MomentumDayPage({ params }: { params: { date: stri
   }
 
   const groups = groupMomentumByScan(picks);
+  const fibStats = hitStatsFromPicks(picks);
 
   return (
     <>
@@ -37,9 +59,19 @@ export default async function MomentumDayPage({ params }: { params: { date: stri
           <p>No momentum picks recorded for {date}.</p>
         </div>
       ) : (
-        groups.map((g, i) => (
-          <MomentumScanSection key={g.scan_id} group={g} defaultExpanded={i === 0} />
-        ))
+        <>
+          {fibStats && (
+            <FibHitSummary
+              stats={fibStats}
+              label="that day"
+              title="Day Target Accuracy · entry then target before stop · validated after 4 PM ET"
+            />
+          )}
+
+          {groups.map((g, i) => (
+            <MomentumScanSection key={g.scan_id} group={g} defaultExpanded={i === 0} />
+          ))}
+        </>
       )}
     </>
   );

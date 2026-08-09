@@ -46,7 +46,13 @@ export default async function DayPage({ params }: { params: { date: string } }) 
         </div>
       ) : (
         <>
-          {fibStats && <FibHitSummary stats={fibStats} label="that day" />}
+          {fibStats && (
+            <FibHitSummary
+              stats={fibStats}
+              label="that day"
+              title="Fib Target Accuracy · entry then target before stop · validated after window close"
+            />
+          )}
 
           {groups.map((g, i) => (
             <ScanSection key={g.scan_id} group={g} defaultExpanded={i === 0} />

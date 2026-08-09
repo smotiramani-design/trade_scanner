@@ -98,6 +98,9 @@ export default async function MomentumTodayPage() {
                 {pct(stats.hitPct)}
                 <span className="stat-sub"> ({stats.hits}/{stats.validated})</span>
               </div>
+              <div className="stat-sub" style={{ marginTop: 4 }}>
+                entry → target before stop
+              </div>
             </div>
           </div>
 

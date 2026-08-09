@@ -383,8 +383,10 @@ CREATE TABLE IF NOT EXISTS scan_features (
     atr_stop         NUMERIC,
     fib_target       NUMERIC,     -- next-hour Fibonacci target
     fib_label        TEXT,
+    fib_entry        NUMERIC,     -- Fib pullback/bounce entry (for stop-first labeling)
+    fib_stop         NUMERIC,     -- Fib invalidation stop
     signals          JSONB,       -- {"Candle": {"bias": "bull", "label": "..."}, ...}
-    fib_hit          BOOLEAN,     -- set EOD: did price hit target within 1 hr?
+    fib_hit          BOOLEAN,     -- set EOD: target before stop within 1 hr?
     fib_window_high  NUMERIC,
     fib_window_low   NUMERIC,
     fib_validated_at TIMESTAMPTZ,
@@ -392,6 +394,8 @@ CREATE TABLE IF NOT EXISTS scan_features (
 );
 
 ALTER TABLE scan_features ADD COLUMN IF NOT EXISTS phit NUMERIC;
+ALTER TABLE scan_features ADD COLUMN IF NOT EXISTS fib_entry NUMERIC;
+ALTER TABLE scan_features ADD COLUMN IF NOT EXISTS fib_stop NUMERIC;
 
 CREATE INDEX IF NOT EXISTS idx_scan_features_scan_id ON scan_features (scan_id);
 CREATE INDEX IF NOT EXISTS idx_scan_features_day     ON scan_features (trade_date DESC, direction);

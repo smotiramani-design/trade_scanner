@@ -1,4 +1,6 @@
 import type { MomentumPickRow } from "@/lib/types";
+import { parseSignalChips } from "@/lib/signals";
+import SignalChips from "./SignalChips";
 
 function fmtPrice(n: number | null) {
   return n == null ? "—" : `$${n.toFixed(2)}`;
@@ -21,6 +23,23 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
   const cardClass = isLong ? "bull-card" : "bear-card";
   const price = pick.price ?? pick.pm_price;
   const chg = pick.chg_pct ?? pick.pm_change_pct;
+  const signalChips = parseSignalChips(pick.signals);
+  const nSignals = signalChips.length || 10;
+  const keySignals = (() => {
+    const raw = pick.key_signals as unknown;
+    if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string");
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((x): x is string => typeof x === "string");
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return [] as string[];
+  })();
 
   return (
     <div className={`pick-card ${cardClass}`}>
@@ -39,18 +58,6 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
       </div>
 
       <div className="card-body">
-        <div className="card-row">
-          <span className={`tier-badge ${isLong ? "trade" : "skip"}`}>
-            {isLong ? "LONG" : "SHORT"}
-          </span>
-          <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
-            {pick.grade ? `${pick.grade} · ` : ""}
-            {pick.net_score != null
-              ? `score ${pick.net_score > 0 ? "+" : ""}${pick.net_score}`
-              : ""}
-          </span>
-        </div>
-
         <div className="conviction-row">
           <span className="conviction-label">Conviction</span>
           <div className="conviction-bar-bg">
@@ -61,6 +68,34 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
           </div>
           <span className="conviction-pct">{conviction.toFixed(0)}%</span>
         </div>
+
+        <div className="card-row">
+          <span className={`tier-badge ${isLong ? "trade" : "skip"}`}>
+            {isLong ? "LONG" : "SHORT"}
+          </span>
+          <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
+            {pick.grade ? `${pick.grade} · ` : ""}
+            {pick.net_score != null
+              ? `score ${pick.net_score > 0 ? "+" : ""}${pick.net_score}/${nSignals}`
+              : ""}
+          </span>
+        </div>
+
+        <SignalChips signals={signalChips} />
+
+        {pick.analysis && (
+          <div className="analysis-text">{pick.analysis}</div>
+        )}
+
+        {keySignals.length > 0 && (
+          <div className="ac-keysig" style={{ marginTop: 6 }}>
+            {keySignals.map((k, i) => (
+              <span className="keysig-chip" key={i}>
+                {k}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="layer-rows">
           <div className="layer-row">
@@ -92,6 +127,18 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
           </span>
           <HitBadge hit={pick.target_hit} />
         </div>
+
+        {pick.day_target != null && (
+          pick.target_hit === true ? (
+            <div className="fib-hit-badge hit">✓ Target hit (before stop)</div>
+          ) : pick.target_hit === false ? (
+            <div className="fib-hit-badge miss">✗ Miss — stop first or no target</div>
+          ) : (
+            <div className="fib-hit-badge pending">
+              ◷ Hit check pending — runs at 4 PM ET
+            </div>
+          )
+        )}
       </div>
     </div>
   );

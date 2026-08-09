@@ -133,7 +133,7 @@ def _feature_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
                  was_pick: bool, trade_date, et_time: str) -> tuple:
     """One scan_features row for a single scanned ticker (full universe)."""
     import json
-    fib_t, fib_l, _, _, _, _ = _fib_plan(ta)
+    fib_t, fib_l, fib_e, fib_s, _, _ = _fib_plan(ta)
     atr = getattr(ta, "atr_stop", None)
     return (
         scan_id, trade_date, et_time,
@@ -144,7 +144,7 @@ def _feature_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
         bool(getattr(ta, "mtf_aligned", True)),
         bool(getattr(ta, "earnings_soon", False)),
         float(atr) if atr else None,
-        fib_t, fib_l,
+        fib_t, fib_l, fib_e, fib_s,
         json.dumps(_signals_json(ta)),
         cs.phit,
     )
@@ -270,8 +270,8 @@ def write_scan(
                            (scan_id, trade_date, et_time, ticker, company, sector,
                             direction, was_pick, net_score, conviction, weighted_score,
                             grade, price, chg_pct, mtf_aligned, earnings_soon, atr_stop,
-                            fib_target, fib_label, signals, phit)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            fib_target, fib_label, fib_entry, fib_stop, signals, phit)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                         feature_rows,
                     )
 

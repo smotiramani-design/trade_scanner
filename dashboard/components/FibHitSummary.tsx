@@ -3,15 +3,17 @@ import type { FibHitStats } from "@/lib/types";
 export default function FibHitSummary({
   stats,
   label = "today",
+  title = "Fib Target Accuracy · validated after 4 PM ET",
 }: {
   stats: FibHitStats;
   label?: "today" | "that day";
+  title?: string;
 }) {
   const dayLabel = label === "today" ? "today" : "that day";
 
   return (
     <div className="fib-summary panel">
-      <div className="panel-title">Fib Target Accuracy · validated after 4 PM ET</div>
+      <div className="panel-title">{title}</div>
       <div className="stats-row" style={{ marginBottom: 0 }}>
         <div className="stat-card fib-stat-main">
           <div className="stat-label">Hit Rate</div>

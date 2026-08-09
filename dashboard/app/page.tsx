@@ -77,7 +77,13 @@ export default async function TodayPage() {
         </div>
       ) : (
         <>
-          {fibStats && <FibHitSummary stats={fibStats} label="today" />}
+          {fibStats && (
+            <FibHitSummary
+              stats={fibStats}
+              label="today"
+              title="Fib Target Accuracy · entry then target before stop · validated after window close"
+            />
+          )}
 
           <div className="stats-row">
             <div className="stat-card">

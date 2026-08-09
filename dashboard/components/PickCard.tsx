@@ -109,12 +109,12 @@ export default function PickCard({ pick }: { pick: PickRow }) {
 
         {pick.fib_target != null && (
           pick.fib_hit === true ? (
-          <div className="fib-hit-badge hit">✓ Target hit</div>
+          <div className="fib-hit-badge hit">✓ Target hit (before stop)</div>
           ) : pick.fib_hit === false ? (
-          <div className="fib-hit-badge miss">✗ Target missed</div>
+          <div className="fib-hit-badge miss">✗ Miss — stop first or no target</div>
           ) : (
           <div className="fib-hit-badge pending">
-            ◷ Hit check pending — runs at 4 PM ET
+            ◷ Hit check pending — runs after the 1hr window
           </div>
           )
         )}
