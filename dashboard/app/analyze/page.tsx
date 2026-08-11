@@ -145,16 +145,6 @@ function ResultCard({ data }: { data: AnalyzePayload }) {
 
       {cs?.analysis && <div className="analysis-text">{cs.analysis}</div>}
 
-      {cs?.key_signals && cs.key_signals.length > 0 && (
-        <div className="ac-keysig">
-          {cs.key_signals.map((k, i) => (
-            <span className="keysig-chip" key={i}>
-              {k}
-            </span>
-          ))}
-        </div>
-      )}
-
       {cs?.conflicting && cs.conflicting.length > 0 && (
         <div className="conflict-flag">
           ⚠ Conflicting: {cs.conflicting.join(", ")}

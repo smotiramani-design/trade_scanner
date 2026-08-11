@@ -25,21 +25,6 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
   const chg = pick.chg_pct ?? pick.pm_change_pct;
   const signalChips = parseSignalChips(pick.signals);
   const nSignals = signalChips.length || 10;
-  const keySignals = (() => {
-    const raw = pick.key_signals as unknown;
-    if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === "string");
-    if (typeof raw === "string") {
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((x): x is string => typeof x === "string");
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    return [] as string[];
-  })();
 
   return (
     <div className={`pick-card ${cardClass}`}>
@@ -85,16 +70,6 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
 
         {pick.analysis && (
           <div className="analysis-text">{pick.analysis}</div>
-        )}
-
-        {keySignals.length > 0 && (
-          <div className="ac-keysig" style={{ marginTop: 6 }}>
-            {keySignals.map((k, i) => (
-              <span className="keysig-chip" key={i}>
-                {k}
-              </span>
-            ))}
-          </div>
         )}
 
         {(pick.fib_entry != null || pick.fib_stop != null ||
