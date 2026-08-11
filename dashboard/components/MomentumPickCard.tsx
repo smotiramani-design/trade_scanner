@@ -97,29 +97,65 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
           </div>
         )}
 
-        <div className="layer-rows">
-          <div className="layer-row">
-            <label>Target</label>
-            <span>
-              {fmtPrice(pick.day_target)}
-              {pick.day_target_label ? ` · ${pick.day_target_label}` : ""}
-            </span>
+        {(pick.fib_entry != null || pick.fib_stop != null ||
+          pick.fib_t1 != null || pick.fib_t2 != null || pick.day_target != null) && (
+          <div className="fib-row">
+            {pick.fib_entry != null && (
+              <div className="fib-item">
+                <label>Entry</label>
+                <span>{fmtPrice(pick.fib_entry)}</span>
+              </div>
+            )}
+            {pick.fib_stop != null && (
+              <div className="fib-item">
+                <label>Stop</label>
+                <span>{fmtPrice(pick.fib_stop)}</span>
+              </div>
+            )}
+            {(pick.fib_t1 ?? pick.day_target) != null && (
+              <div className="fib-item">
+                <label>
+                  T1
+                  {(pick.day_target_label || "")
+                    ? ` · ${pick.day_target_label}`
+                    : ""}
+                </label>
+                <span>{fmtPrice(pick.fib_t1 ?? pick.day_target)}</span>
+              </div>
+            )}
+            {pick.fib_t2 != null && (
+              <div className="fib-item">
+                <label>T2</label>
+                <span>{fmtPrice(pick.fib_t2)}</span>
+              </div>
+            )}
+            {pick.day_target != null && (
+              <div className="fib-item">
+                <label>Day hit</label>
+                <span
+                  className={
+                    pick.target_hit === true
+                      ? "up"
+                      : pick.target_hit === false
+                        ? "down"
+                        : undefined
+                  }
+                  style={
+                    pick.target_hit == null
+                      ? { color: "var(--muted)" }
+                      : undefined
+                  }
+                >
+                  {pick.target_hit === true
+                    ? "Yes"
+                    : pick.target_hit === false
+                      ? "No"
+                      : "Pending"}
+                </span>
+              </div>
+            )}
           </div>
-          <div className="layer-row">
-            <label>Entry / Stop</label>
-            <span>
-              {fmtPrice(pick.fib_entry)} / {fmtPrice(pick.fib_stop)}
-            </span>
-          </div>
-          {(pick.day_high != null || pick.day_low != null) && (
-            <div className="layer-row">
-              <label>Day H/L</label>
-              <span>
-                {fmtPrice(pick.day_high)} / {fmtPrice(pick.day_low)}
-              </span>
-            </div>
-          )}
-        </div>
+        )}
 
         <div className="card-row" style={{ marginTop: 8 }}>
           <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
