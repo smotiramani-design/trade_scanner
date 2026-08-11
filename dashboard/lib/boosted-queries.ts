@@ -21,12 +21,36 @@ export async function getBoostedRuns(limit = 50): Promise<BoostedRunRow[]> {
   return (data ?? []) as BoostedRunRow[];
 }
 
-/** Recent picks that have a predicted price band (for the Ranges page). */
+/** Recent picks that have a predicted favourable price band. */
 export async function getRecentRangePicks(limit = 40): Promise<PickRow[]> {
   const { data, error } = await supabase
     .from("v_scan_picks")
     .select("*")
     .not("pred_mid", "is", null)
+    .order("run_ts", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as PickRow[];
+}
+
+/** Recent picks with an adverse / risk band. */
+export async function getRecentRiskPicks(limit = 40): Promise<PickRow[]> {
+  const { data, error } = await supabase
+    .from("v_scan_picks")
+    .select("*")
+    .not("adv_mid", "is", null)
+    .order("run_ts", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as PickRow[];
+}
+
+/** Recent picks with ensemble P(hit). */
+export async function getRecentEnsemblePicks(limit = 40): Promise<PickRow[]> {
+  const { data, error } = await supabase
+    .from("v_scan_picks")
+    .select("*")
+    .not("ens_phit", "is", null)
     .order("run_ts", { ascending: false })
     .limit(limit);
   if (error) throw error;

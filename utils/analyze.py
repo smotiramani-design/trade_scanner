@@ -1,8 +1,8 @@
 """
 utils/analyze.py — shared on-demand single-ticker analysis.
 
-Runs the full engine (10 signals + conviction + Fibonacci) for one ticker and
-returns a JSON-safe dict. Used by BOTH:
+Runs the full engine (10 signals + conviction + Fibonacci + ATR R-plan) for one
+ticker and returns a JSON-safe dict. Used by BOTH:
   • web/api.py            — FastAPI backend for local dev
   • analyze_lambda.py     — AWS Lambda Function URL handler for production
 
@@ -47,6 +47,22 @@ def serialise_fib(f) -> Optional[dict]:
     }
 
 
+def serialise_atr(plan) -> Optional[dict]:
+    """Serialise an AtrPlan to a JSON-safe dict (see signals/atr.py)."""
+    if not plan:
+        return None
+    return {
+        "entry":      getattr(plan, "entry", None),
+        "stop":       getattr(plan, "stop", None),
+        "target_1":   getattr(plan, "target_1", None),
+        "target_2":   getattr(plan, "target_2", None),
+        "atr":        getattr(plan, "atr", None),
+        "r_distance": getattr(plan, "r_distance", None),
+        "multiplier": getattr(plan, "multiplier", None),
+        "direction":  getattr(plan, "direction", None),
+    }
+
+
 def serialise_conviction(cs) -> dict:
     """Serialise a ConvictionScore to a JSON-safe dict."""
     return {
@@ -78,6 +94,7 @@ def analyze_ticker(ticker: str, hourly: bool = True) -> dict:
     from signals.conviction import direction_from_signals, score_conviction
     from signals.base import TickerAnalysis
     from signals.fibonacci import compute_fibonacci
+    from signals.atr import compute_atr_plan
 
     sym = ticker.upper().strip()
     bars = get_bars(sym, market_open=hourly)
@@ -104,6 +121,10 @@ def analyze_ticker(ticker: str, hourly: bool = True) -> dict:
     ta.fib = compute_fibonacci(
         sym, bars, bars[-1].close, ta.net_score, direction=trade_dir,
     )
+    ta.atr_plan = compute_atr_plan(
+        bars, bars[-1].close, ta.net_score, direction=trade_dir,
+    )
+    ta.atr_stop = ta.atr_plan.stop if ta.atr_plan else None
     cs = score_conviction(ta)
 
     return {
@@ -117,5 +138,6 @@ def analyze_ticker(ticker: str, hourly: bool = True) -> dict:
         "signals":    [{"name": n, "bias": s.bias.value, "label": s.label, "detail": s.detail}
                        for n, s in zip(SIG_NAMES, sigs)],
         "fib":        serialise_fib(ta.fib),
+        "atr":        serialise_atr(ta.atr_plan),
         "as_of":      datetime.now().isoformat(),
     }

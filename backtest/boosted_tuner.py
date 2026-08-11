@@ -1,24 +1,24 @@
 """
-backtest/boosted_tuner.py — Gradient-boosted P(hit) + predicted price range.
+backtest/boosted_tuner.py — Gradient-boosted models alongside logistic Fib.
 
-Trains TWO LightGBM models on the same labeled scan_features / picks data the
-logistic tuner uses, and saves them as JSON tree dumps for pure-Python inference
-(signals/boosted.py) — no LightGBM binary needed on Lambda.
+Trains several models on the same labeled scan_features / picks data and saves
+JSON tree dumps for pure-Python inference (signals/boosted.py) — no LightGBM /
+XGBoost binaries needed on Lambda.
 
-  1) P(hit) classifier  → models/lgbm_phit_model.json
-     Same label as logistic: did the Fib target get hit?
-  2) Price-range quantile regressors → models/lgbm_range_model.json
-     Label = favourable excursion in the Fib window
-       bull: (window_high − price) / price
-       bear: (price − window_low) / price
-     Predicts 25th / 50th / 75th percentiles → absolute price band at scan time.
+  1) LightGBM P(hit)        → models/lgbm_phit_model.json
+  2) Favourable price range → models/lgbm_range_model.json   (quantile)
+  3) Adverse / risk range   → models/lgbm_adverse_model.json (quantile)
+  4) XGBoost P(hit)         → models/xgb_phit_model.json
 
-These models run ALONGSIDE the existing logistic Fib pipeline. They do NOT
-overwrite conviction WEIGHTS or replace logistic ranking.
+At scan time an ensemble P(hit) blends logistic + LightGBM + XGBoost, and an
+EV score combines hit-prob with favourable vs adverse excursions.
+
+These run ALONGSIDE the logistic Fib pipeline. They do NOT overwrite conviction
+WEIGHTS or replace logistic ranking.
 
 Usage:
-  python -m backtest.boosted_tuner                  # train + report
-  python -m backtest.boosted_tuner --save-db        # also log to ml_boosted_runs
+  python -m backtest.boosted_tuner
+  python -m backtest.boosted_tuner --save-db
   python -m backtest.boosted_tuner --days 60
 """
 from __future__ import annotations
@@ -36,7 +36,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from backtest.logistic_tuner import (
-    LabeledPick,
     N_SIGNALS,
     build_design_matrix,
     load_spy_regime,
@@ -50,6 +49,8 @@ ET = ZoneInfo("America/New_York")
 MODELS_DIR = Path(__file__).parent.parent / "models"
 PHIT_PATH = MODELS_DIR / "lgbm_phit_model.json"
 RANGE_PATH = MODELS_DIR / "lgbm_range_model.json"
+ADVERSE_PATH = MODELS_DIR / "lgbm_adverse_model.json"
+XGB_PHIT_PATH = MODELS_DIR / "xgb_phit_model.json"
 
 QUANTILES = (("0.25", 0.25), ("0.50", 0.50), ("0.75", 0.75))
 
@@ -62,6 +63,18 @@ def _require_lgbm():
         raise SystemExit(
             "lightgbm is required for boosted_tuner.\n"
             "Install with:  pip install lightgbm\n"
+            f"({e})"
+        )
+
+
+def _require_xgb():
+    try:
+        import xgboost as xgb  # noqa: F401
+        return xgb
+    except ImportError as e:
+        raise SystemExit(
+            "xgboost is required for boosted_tuner.\n"
+            "Install with:  pip install xgboost\n"
             f"({e})"
         )
 
@@ -254,6 +267,115 @@ def train_range(
     return artifact, metrics
 
 
+def train_xgb_phit(
+    X, y, names: List[str], *, test_frac: float = 0.3
+) -> Tuple[dict, dict]:
+    """Fit XGBoost binary classifier; dump trees as JSON for pure-Python infer."""
+    import numpy as np
+    from xgboost import XGBClassifier
+    from sklearn.metrics import accuracy_score, roc_auc_score
+
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=int)
+    n = len(y)
+    split = _walk_forward_split(n, test_frac)
+    Xtr, Xte = X[:split], X[split:]
+    ytr, yte = y[:split], y[split:]
+
+    # scale_pos_weight ≈ neg/pos for class imbalance (mirrors balanced LightGBM)
+    n_pos = max(1, int(ytr.sum()))
+    n_neg = max(1, int(len(ytr) - ytr.sum()))
+    spw = n_neg / n_pos
+
+    clf = XGBClassifier(
+        n_estimators=80,
+        learning_rate=0.08,
+        max_depth=4,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_lambda=1.0,
+        scale_pos_weight=spw,
+        objective="binary:logistic",
+        eval_metric="auc",
+        random_state=42,
+        verbosity=0,
+    )
+    clf.fit(Xtr, ytr)
+    proba_te = clf.predict_proba(Xte)[:, 1]
+    pred_te = (proba_te >= 0.5).astype(int)
+    test_acc = float(accuracy_score(yte, pred_te)) if len(yte) else None
+    test_auc = None
+    if len(yte) and len(set(yte.tolist())) == 2:
+        test_auc = float(roc_auc_score(yte, proba_te))
+
+    clf_full = XGBClassifier(
+        n_estimators=80,
+        learning_rate=0.08,
+        max_depth=4,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_lambda=1.0,
+        scale_pos_weight=float(max(1, int((y == 0).sum())) / max(1, int(y.sum()))),
+        objective="binary:logistic",
+        eval_metric="auc",
+        random_state=42,
+        verbosity=0,
+    )
+    clf_full.fit(X, y)
+    booster = clf_full.get_booster()
+    raw_trees = booster.get_dump(dump_format="json")
+    # Feature importance by gain
+    score = booster.get_score(importance_type="gain")
+    importance = sorted(
+        [{"name": names[int(k[1:])] if k.startswith("f") and k[1:].isdigit()
+          and int(k[1:]) < len(names) else k,
+          "gain": float(v)} for k, v in score.items()],
+        key=lambda x: -x["gain"],
+    )
+    base_score = 0.5
+    try:
+        cfg = json.loads(booster.save_config())
+        # nested under learner/learner_model_param/base_score in recent xgboost
+        bmp = (cfg.get("learner", {})
+                 .get("learner_model_param", {}))
+        if "base_score" in bmp:
+            raw = bmp["base_score"]
+            # sometimes a string like "[5E-1]"
+            if isinstance(raw, str):
+                raw = raw.strip("[]")
+            base_score = float(raw)
+    except Exception:
+        pass
+
+    metrics = {
+        "n_samples": int(n),
+        "n_hits": int(y.sum()),
+        "n_misses": int(n - y.sum()),
+        "base_rate": round(100.0 * float(y.mean()), 1) if n else None,
+        "n_train": int(len(ytr)),
+        "n_test": int(len(yte)),
+        "test_acc": round(test_acc * 100, 1) if test_acc is not None else None,
+        "test_auc": round(test_auc, 4) if test_auc is not None else None,
+        "feature_importance": importance,
+    }
+    artifact = {
+        "version": 1,
+        "kind": "xgb_phit_classifier",
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+        "feature_names": list(names),
+        "n_signal_cols": N_SIGNALS,
+        "include_context": True,
+        "include_regime": True,
+        "objective": "binary:logistic",
+        "base_score": base_score,
+        "trees": raw_trees,  # list of JSON strings
+        "test_auc": metrics["test_auc"],
+        "n_samples": metrics["n_samples"],
+        "feature_importance": importance,
+    }
+    return artifact, metrics
+
+
 def save_artifact(path: Path, artifact: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(artifact, indent=2))
@@ -266,6 +388,8 @@ def save_run(
     days: Optional[int],
     phit_metrics: dict,
     range_metrics: Optional[dict],
+    adverse_metrics: Optional[dict] = None,
+    xgb_metrics: Optional[dict] = None,
     bias: Optional[dict],
 ) -> Optional[int]:
     """Persist one ml_boosted_runs row for the dashboard."""
@@ -289,8 +413,12 @@ def save_run(
                     phit_importance,
                     range_n_samples, range_mean_excursion, range_median_excursion,
                     range_test_mae, range_test_coverage, range_importance,
+                    adv_n_samples, adv_mean_excursion, adv_median_excursion,
+                    adv_test_mae, adv_test_coverage, adv_importance,
+                    xgb_test_acc, xgb_test_auc, xgb_importance,
                     selection_bias)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    RETURNING id""",
                 (
                     now_et.date(), now_et.strftime("%H:%M"), source, days,
@@ -309,6 +437,15 @@ def save_run(
                     json.dumps((range_metrics or {}).get("test_mae")),
                     json.dumps((range_metrics or {}).get("test_coverage")),
                     json.dumps((range_metrics or {}).get("feature_importance")),
+                    (adverse_metrics or {}).get("n_samples"),
+                    (adverse_metrics or {}).get("mean_excursion_pct"),
+                    (adverse_metrics or {}).get("median_excursion_pct"),
+                    json.dumps((adverse_metrics or {}).get("test_mae")),
+                    json.dumps((adverse_metrics or {}).get("test_coverage")),
+                    json.dumps((adverse_metrics or {}).get("feature_importance")),
+                    (xgb_metrics or {}).get("test_acc"),
+                    (xgb_metrics or {}).get("test_auc"),
+                    json.dumps((xgb_metrics or {}).get("feature_importance")),
                     json.dumps(bias) if bias else None,
                 ),
             )
@@ -323,15 +460,20 @@ def save_run(
     finally:
         conn.close()
 
-
-def print_report(phit_m: dict, range_m: Optional[dict], source: str,
-                 bias: Optional[dict]) -> None:
+def print_report(
+    phit_m: dict,
+    range_m: Optional[dict],
+    adverse_m: Optional[dict],
+    xgb_m: Optional[dict],
+    source: str,
+    bias: Optional[dict],
+) -> None:
     bar = "=" * 74
     print(f"\n{bar}")
-    print("GRADIENT-BOOSTED MODELS (LightGBM)")
+    print("GRADIENT-BOOSTED MODELS (LightGBM + XGBoost)")
     print(bar)
     print(f"\nData source   : {source}")
-    print(f"\n── P(hit) classifier ──")
+    print(f"\n── LightGBM P(hit) ──")
     print(f"Labeled rows  : {phit_m.get('n_samples')}  "
           f"({phit_m.get('n_hits')} hits / {phit_m.get('n_misses')} misses, "
           f"base {phit_m.get('base_rate')}%)")
@@ -345,30 +487,56 @@ def print_report(phit_m: dict, range_m: Optional[dict], source: str,
     for item in (phit_m.get("feature_importance") or [])[:8]:
         print(f"  {item['name']:<12} gain={item['gain']:.1f}")
 
+    if xgb_m:
+        print(f"\n── XGBoost P(hit) ──")
+        print(f"Walk-forward  : test acc {xgb_m.get('test_acc')}%  "
+              f"AUC {xgb_m.get('test_auc')}  "
+              f"({xgb_m.get('n_train')} train → {xgb_m.get('n_test')} test)")
+        print("Top features  :")
+        for item in (xgb_m.get("feature_importance") or [])[:8]:
+            print(f"  {item['name']:<12} gain={item['gain']:.1f}")
+
     if range_m:
-        print(f"\n── Price-range quantile model ──")
+        print(f"\n── Favourable price-range (quantile) ──")
         print(f"Labeled rows  : {range_m.get('n_samples')}  "
               f"(mean excursion {range_m.get('mean_excursion_pct')}%, "
               f"median {range_m.get('median_excursion_pct')}%)")
         print(f"Walk-forward MAE (excursion fraction): {range_m.get('test_mae')}")
         print(f"Quantile coverage (ideal ≈ 0.25/0.50/0.75): "
               f"{range_m.get('test_coverage')}")
-        print("Top features (median model):")
-        for item in (range_m.get("feature_importance") or [])[:8]:
-            print(f"  {item['name']:<12} gain={item['gain']:.1f}")
+
+    if adverse_m:
+        print(f"\n── Adverse / risk range (quantile) ──")
+        print(f"Labeled rows  : {adverse_m.get('n_samples')}  "
+              f"(mean adverse {adverse_m.get('mean_excursion_pct')}%, "
+              f"median {adverse_m.get('median_excursion_pct')}%)")
+        print(f"Walk-forward MAE: {adverse_m.get('test_mae')}")
+        print(f"Quantile coverage: {adverse_m.get('test_coverage')}")
+
+    arts = [PHIT_PATH.name]
+    if range_m:
+        arts.append(RANGE_PATH.name)
+    if adverse_m:
+        arts.append(ADVERSE_PATH.name)
+    if xgb_m:
+        arts.append(XGB_PHIT_PATH.name)
     print(f"\n{bar}")
-    print(f"Artifacts: {PHIT_PATH.name}"
-          + (f", {RANGE_PATH.name}" if range_m else ""))
+    print(f"Artifacts: {', '.join(arts)}")
     print(bar + "\n")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    _require_lgbm()
+    # Avoid OpenMP deadlocks when LightGBM + XGBoost share one process (esp. macOS).
+    import os
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
     parser = argparse.ArgumentParser(
-        description="Train LightGBM P(hit) + price-range models "
-                    "(alongside logistic Fib pipeline).",
+        description="Train LightGBM + XGBoost models alongside logistic Fib.",
     )
     parser.add_argument("--source", choices=["auto", "features", "picks"],
                         default="auto")
@@ -379,7 +547,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="Log run to ml_boosted_runs for the dashboard")
     parser.add_argument("--no-regime", action="store_true")
     parser.add_argument("--no-range", action="store_true",
-                        help="Skip the price-range quantile model")
+                        help="Skip favourable + adverse quantile models")
+    parser.add_argument("--no-xgb", action="store_true",
+                        help="Skip the XGBoost P(hit) classifier")
     args = parser.parse_args(argv)
 
     try:
@@ -402,34 +572,62 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         include_regime=not args.no_regime,
     )
     y_hit = [p.hit for p in picks]
+    import numpy as np
 
+    # Train XGBoost BEFORE importing/fitting LightGBM — OpenMP can deadlock
+    # the other way on macOS when both libs are loaded in one process.
+    xgb_m = None
+    if not args.no_xgb:
+        _require_xgb()
+        xgb_art, xgb_m = train_xgb_phit(X, y_hit, names, test_frac=args.test_frac)
+        xgb_art["source"] = source
+        xgb_art["include_regime"] = not args.no_regime
+        save_artifact(XGB_PHIT_PATH, xgb_art)
+
+    _require_lgbm()
     phit_art, phit_m = train_phit(X, y_hit, names, test_frac=args.test_frac)
     phit_art["source"] = source
     phit_art["include_regime"] = not args.no_regime
     save_artifact(PHIT_PATH, phit_art)
 
     range_m = None
+    adverse_m = None
     if not args.no_range:
-        # Only rows with a measurable favourable excursion.
-        idx = [i for i, p in enumerate(picks) if p.favorable_excursion is not None]
-        if len(idx) >= args.min_samples:
-            import numpy as np
-            Xr = np.asarray(X, dtype=float)[idx]
-            yr = [picks[i].favorable_excursion for i in idx]
+        idx_fav = [i for i, p in enumerate(picks)
+                   if p.favorable_excursion is not None]
+        if len(idx_fav) >= args.min_samples:
+            Xr = np.asarray(X, dtype=float)[idx_fav]
+            yr = [picks[i].favorable_excursion for i in idx_fav]
             range_art, range_m = train_range(Xr, yr, names, test_frac=args.test_frac)
             range_art["source"] = source
             range_art["include_regime"] = not args.no_regime
+            range_art["kind"] = "favorable_range"
             save_artifact(RANGE_PATH, range_art)
         else:
-            log.warning("Only %d rows with window extremes — skipping range model.",
-                        len(idx))
+            log.warning("Only %d rows with favourable extremes — skipping range.",
+                        len(idx_fav))
+
+        idx_adv = [i for i, p in enumerate(picks)
+                   if p.adverse_excursion is not None]
+        if len(idx_adv) >= args.min_samples:
+            Xa = np.asarray(X, dtype=float)[idx_adv]
+            ya = [picks[i].adverse_excursion for i in idx_adv]
+            adv_art, adverse_m = train_range(Xa, ya, names, test_frac=args.test_frac)
+            adv_art["source"] = source
+            adv_art["include_regime"] = not args.no_regime
+            adv_art["kind"] = "adverse_range"
+            save_artifact(ADVERSE_PATH, adv_art)
+        else:
+            log.warning("Only %d rows with adverse extremes — skipping adverse.",
+                        len(idx_adv))
 
     bias = selection_bias(picks) if source == "features" else None
-    print_report(phit_m, range_m, source, bias)
+    print_report(phit_m, range_m, adverse_m, xgb_m, source, bias)
 
     if args.save_db:
         save_run(source=source, days=args.days, phit_metrics=phit_m,
-                 range_metrics=range_m, bias=bias)
+                 range_metrics=range_m, adverse_metrics=adverse_m,
+                 xgb_metrics=xgb_m, bias=bias)
     return 0
 
 

@@ -9,6 +9,7 @@ import {
 import ScanSection from "@/components/ScanSection";
 import ConvictionChart from "@/components/ConvictionChart";
 import FibHitSummary from "@/components/FibHitSummary";
+import StrategyKey from "@/components/StrategyKey";
 import type { PickRow, FibHitStats } from "@/lib/types";
 
 // Always fetch fresh; new scans land hourly.
@@ -84,6 +85,8 @@ export default async function TodayPage() {
               title="Fib Target Accuracy · entry then target before stop · validated after window close"
             />
           )}
+
+          <StrategyKey />
 
           <div className="stats-row">
             <div className="stat-card">

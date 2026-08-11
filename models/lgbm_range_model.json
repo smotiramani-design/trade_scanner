@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "kind": "range_quantile",
-  "trained_at": "2026-08-11T02:28:50.010854+00:00",
+  "kind": "favorable_range",
+  "trained_at": "2026-08-11T03:12:34.694815+00:00",
   "feature_names": [
     "Candle",
     "Volume",

@@ -103,11 +103,27 @@ def _fib_plan(ta: TickerAnalysis) -> Tuple[
     )
 
 
+def _atr_plan(ta: TickerAnalysis):
+    """Return (entry, stop, t1, t2) from AtrPlan; fall back to atr_stop alone."""
+    plan = getattr(ta, "atr_plan", None)
+    if plan is not None:
+        return (
+            float(plan.entry),
+            float(plan.stop),
+            float(plan.target_1),
+            float(plan.target_2),
+        )
+    stop = getattr(ta, "atr_stop", None)
+    if stop is None:
+        return None, None, None, None
+    return None, float(stop), None, None
+
+
 def _pick_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
               direction: str, rank: int, trade_date, et_time: str) -> tuple:
     import json
     fib_t, fib_l, fib_e, fib_s, fib_t1, fib_t2 = _fib_plan(ta)
-    atr = getattr(ta, "atr_stop", None)
+    atr_e, atr_s, atr_t1, atr_t2 = _atr_plan(ta)
     return (
         scan_id, trade_date, et_time,
         ta.ticker, ta.company_name or None, getattr(ta, "sector", "") or None,
@@ -120,14 +136,21 @@ def _pick_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
         fib_t, fib_l, fib_e, fib_s, fib_t1, fib_t2,
         bool(getattr(ta, "mtf_aligned", True)),
         bool(getattr(ta, "earnings_soon", False)),
-        float(atr) if atr else None,
+        atr_e, atr_s, atr_t1, atr_t2,
         json.dumps(_signals_json(ta)),
         cs.phit,
         cs.xgb_phit,
+        cs.xgboost_phit,
+        cs.ens_phit,
         cs.pred_lo,
         cs.pred_mid,
         cs.pred_hi,
         cs.pred_mid_pct,
+        cs.adv_lo,
+        cs.adv_mid,
+        cs.adv_hi,
+        cs.adv_mid_pct,
+        cs.ev_score,
     )
 
 
@@ -258,9 +281,12 @@ def write_scan(
                         net_score, conviction, weighted_score, grade, verdict,
                         analysis, key_signals, conflicting,
                         fib_target, fib_label, fib_entry, fib_stop, fib_t1, fib_t2,
-                        mtf_aligned, earnings_soon, atr_stop, signals, phit,
-                        xgb_phit, pred_lo, pred_mid, pred_hi, pred_mid_pct)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        mtf_aligned, earnings_soon,
+                        atr_entry, atr_stop, atr_t1, atr_t2, signals, phit,
+                        xgb_phit, xgboost_phit, ens_phit,
+                        pred_lo, pred_mid, pred_hi, pred_mid_pct,
+                        adv_lo, adv_mid, adv_hi, adv_mid_pct, ev_score)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     pick_rows,
                 )
 

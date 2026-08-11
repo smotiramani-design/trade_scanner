@@ -25,12 +25,17 @@ const SECTIONS = [
       { href: "/ml", label: "Model Weights" },
       { href: "/ml/data", label: "Training Data" },
       { href: "/ml/boosted", label: "Boosted P(hit)" },
+      { href: "/ml/ensemble", label: "Ensemble P(hit)" },
       { href: "/ml/ranges", label: "Predicted Ranges" },
+      { href: "/ml/risk", label: "Risk Ranges" },
     ],
   },
   {
     label: "On-Demand",
-    links: [{ href: "/analyze", label: "Analyze Ticker" }],
+    links: [
+      { href: "/guide", label: "Guide" },
+      { href: "/analyze", label: "Analyze Ticker" },
+    ],
   },
 ];
 

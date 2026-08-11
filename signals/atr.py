@@ -1,34 +1,43 @@
 """
-signals/atr.py — ENH-10: ATR-based dynamic stop loss.
+signals/atr.py — ATR stop + ATR R-multiple trade plan.
 
-Average True Range (ATR) measures a stock's actual daily volatility.
-A fixed 2% stop is arbitrary — it's too tight for NVDA (ATR ~3.5%) and
-too wide for AAPL (ATR ~1.2%). ATR-based stops adapt automatically.
+Average True Range (ATR) measures a stock's actual volatility.
+A fixed 2% stop is arbitrary — too tight for NVDA, too wide for AAPL.
+ATR-based levels adapt automatically.
 
-Formula:
-  True Range  = max(high-low, |high-prev_close|, |low-prev_close|)
-  ATR(14)     = 14-period Wilder's smoothed average of True Range
-  ATR stop    = entry_price - (ATR_multiplier × ATR)   [longs]
-              = entry_price + (ATR_multiplier × ATR)   [shorts]
+ATR plan (parallel to Fibonacci — does NOT replace Fib):
+  Entry  = scan price (market-style at signal time)
+  Stop   = entry ± (multiplier × ATR)     [1.5× default]
+  R      = |entry − stop|
+  T1     = entry ± 1R                     [1:1 reward]
+  T2     = entry ± 2R                     [1:2 reward]
 
-Multiplier of 1.5× is standard institutional practice:
-  Tight  = 1.0×  (aggressive, more false stops)
-  Normal = 1.5×  (balanced — default)
-  Wide   = 2.0×  (conservative, larger risk per trade)
-
-The ATR stop is stored on TickerAnalysis.atr_stop and used in
-trade_engine.py as the stop level when it results in a better
-(wider) stop than the Fibonacci or fixed % level.
+The ATR stop is also used in trade_engine.py to widen a Fib stop when ATR
+implies more room than the Fib invalidation level.
 """
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import List, Optional
 
 from data.yahoo_client import Bar
 
 
 ATR_PERIOD:     int   = 14
 ATR_MULTIPLIER: float = 1.5    # 1.5× ATR = institutional standard
+
+
+@dataclass
+class AtrPlan:
+    """Volatility trade plan in R-multiples (alongside FibLevels)."""
+    entry:      float
+    stop:       float
+    target_1:   float          # 1R
+    target_2:   float          # 2R
+    atr:        float          # raw ATR(14) in price units
+    r_distance: float          # |entry − stop|
+    multiplier: float
+    direction:  str            # "bullish" | "bearish"
 
 
 def compute_atr(bars: List[Bar], period: int = ATR_PERIOD) -> float:
@@ -40,26 +49,22 @@ def compute_atr(bars: List[Bar], period: int = ATR_PERIOD) -> float:
     if len(bars) < period + 1:
         return 0.0
 
-    # True range for each bar
     trs: List[float] = []
     for i in range(1, len(bars)):
-        high      = bars[i].high
-        low       = bars[i].low
+        high = bars[i].high
+        low = bars[i].low
         prev_close = bars[i - 1].close
         tr = max(
             high - low,
             abs(high - prev_close),
-            abs(low  - prev_close),
+            abs(low - prev_close),
         )
         trs.append(tr)
 
     if not trs:
         return 0.0
 
-    # Initial ATR = simple average of first `period` TRs
     atr = sum(trs[:period]) / period
-
-    # Wilder's smoothing for remaining bars
     for tr in trs[period:]:
         atr = (atr * (period - 1) + tr) / period
 
@@ -75,17 +80,31 @@ def compute_atr_stop(
     direction:  Optional[str] = None,
 ) -> Optional[float]:
     """
-    Compute ATR-based stop loss price.
+    Compute ATR-based stop loss price (legacy helper).
 
-    Returns the stop price (not distance), or None if ATR cannot be computed.
+    Prefer `compute_atr_plan` for the full Entry / Stop / T1 / T2 plan.
+    Prefer `direction` ("bullish"|"bearish"|"neutral") when available.
+    """
+    plan = compute_atr_plan(
+        bars, price, net_score,
+        multiplier=multiplier, period=period, direction=direction,
+    )
+    return plan.stop if plan else None
 
-    Prefer `direction` ("bullish"|"bearish"|"neutral") when available so the stop
-    matches weighted conviction (same side as Fib / pick ranking). Falls back to
-    net_score when direction is omitted.
 
-    For longs  (bullish): stop = price - (multiplier × ATR)
-    For shorts (bearish): stop = price + (multiplier × ATR)
-    Neutral:              returns None
+def compute_atr_plan(
+    bars:       List[Bar],
+    price:      float,
+    net_score:  int,
+    multiplier: float = ATR_MULTIPLIER,
+    period:     int   = ATR_PERIOD,
+    direction:  Optional[str] = None,
+) -> Optional[AtrPlan]:
+    """
+    Full ATR R-multiple plan: entry (= price), stop (1.5×ATR), T1 (1R), T2 (2R).
+
+    Direction follows weighted conviction when provided (same as Fib / picks).
+    Returns None for neutral or when ATR cannot be computed.
     """
     if not price or price <= 0:
         return None
@@ -101,14 +120,30 @@ def compute_atr_stop(
     if atr <= 0:
         return None
 
-    stop_distance = multiplier * atr
+    r = round(multiplier * atr, 4)
+    if r <= 0:
+        return None
 
+    entry = round(float(price), 2)
     if direction == "bullish":
-        stop = round(price - stop_distance, 2)
+        stop = round(entry - r, 2)
+        t1 = round(entry + r, 2)
+        t2 = round(entry + 2.0 * r, 2)
     else:
-        stop = round(price + stop_distance, 2)
+        stop = round(entry + r, 2)
+        t1 = round(entry - r, 2)
+        t2 = round(entry - 2.0 * r, 2)
 
-    return stop
+    return AtrPlan(
+        entry=entry,
+        stop=stop,
+        target_1=t1,
+        target_2=t2,
+        atr=atr,
+        r_distance=round(r, 2),
+        multiplier=multiplier,
+        direction=direction,
+    )
 
 
 def atr_stop_pct(bars: List[Bar], price: float, multiplier: float = ATR_MULTIPLIER) -> float:
@@ -124,7 +159,7 @@ def atr_signal_detail(bars: List[Bar], price: float) -> str:
     atr = compute_atr(bars)
     if not atr or not price:
         return "ATR unavailable"
-    pct  = atr / price * 100
+    pct = atr / price * 100
     stop = atr * ATR_MULTIPLIER
     return (f"ATR(14)=${atr:.2f} ({pct:.1f}%)  "
             f"1.5× stop=${stop:.2f} ({pct*ATR_MULTIPLIER:.1f}%)")

@@ -72,11 +72,18 @@ class ConvictionScore:
     phit: Optional[float] = None   # logistic P(fib target hit), 0..1
     # Gradient-boosted models (signals/boosted.py) — parallel to logistic, not
     # used for ranking. Surfaced on the Boosted Models dashboard pages.
-    xgb_phit: Optional[float] = None          # LightGBM P(hit)
-    pred_lo: Optional[float] = None           # predicted price band low
+    xgb_phit: Optional[float] = None          # LightGBM P(hit) (historical name)
+    xgboost_phit: Optional[float] = None      # true XGBoost P(hit)
+    ens_phit: Optional[float] = None          # blend of logistic + LGBM + XGB
+    pred_lo: Optional[float] = None           # predicted favourable price band low
     pred_mid: Optional[float] = None
     pred_hi: Optional[float] = None
     pred_mid_pct: Optional[float] = None      # median favourable excursion %
+    adv_lo: Optional[float] = None            # adverse / stop-side band
+    adv_mid: Optional[float] = None
+    adv_hi: Optional[float] = None
+    adv_mid_pct: Optional[float] = None       # median adverse excursion %
+    ev_score: Optional[float] = None          # rough risk-adjusted expected move %
 
     @property
     def emoji(self) -> str:
@@ -269,22 +276,37 @@ def _attach_phit(scored: List[Tuple[TickerAnalysis, ConvictionScore]]) -> bool:
 
 
 def _attach_boosted(scored: List[Tuple[TickerAnalysis, ConvictionScore]]) -> None:
-    """Attach LightGBM P(hit) + price-range preds. Never affects ranking."""
+    """Attach LightGBM / XGBoost / range / ensemble preds. Never affects ranking."""
     try:
         from signals.boosted import (
-            predict_boosted_phit, predict_price_range,
+            predict_boosted_phit, predict_xgboost_phit, predict_ensemble_phit,
+            predict_price_range, predict_adverse_range, predict_ev_score,
             phit_model_available, range_model_available,
+            adverse_model_available, xgb_model_available,
         )
     except Exception:
         return
     have_phit = phit_model_available()
+    have_xgb = xgb_model_available()
     have_range = range_model_available()
-    if not have_phit and not have_range:
+    have_adv = adverse_model_available()
+    if not (have_phit or have_xgb or have_range or have_adv):
         return
     for ta, cs in scored:
         if have_phit and cs.xgb_phit is None:
             try:
                 cs.xgb_phit = predict_boosted_phit(ta, cs)
+            except Exception:
+                pass
+        if have_xgb and cs.xgboost_phit is None:
+            try:
+                cs.xgboost_phit = predict_xgboost_phit(ta, cs)
+            except Exception:
+                pass
+        if cs.ens_phit is None and (cs.phit is not None or cs.xgb_phit is not None
+                                    or cs.xgboost_phit is not None):
+            try:
+                cs.ens_phit = predict_ensemble_phit(ta, cs, logistic_phit=cs.phit)
             except Exception:
                 pass
         if have_range and cs.pred_mid is None:
@@ -295,6 +317,23 @@ def _attach_boosted(scored: List[Tuple[TickerAnalysis, ConvictionScore]]) -> Non
                     cs.pred_mid = band["mid"]
                     cs.pred_hi = band["hi"]
                     cs.pred_mid_pct = band["mid_pct"]
+            except Exception:
+                pass
+        if have_adv and cs.adv_mid is None:
+            try:
+                band = predict_adverse_range(ta, cs)
+                if band:
+                    cs.adv_lo = band["lo"]
+                    cs.adv_mid = band["mid"]
+                    cs.adv_hi = band["hi"]
+                    cs.adv_mid_pct = band["mid_pct"]
+            except Exception:
+                pass
+        if cs.ev_score is None:
+            try:
+                cs.ev_score = predict_ev_score(
+                    cs.ens_phit, cs.pred_mid_pct, cs.adv_mid_pct,
+                )
             except Exception:
                 pass
 

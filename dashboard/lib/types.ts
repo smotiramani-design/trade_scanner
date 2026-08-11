@@ -20,14 +20,26 @@ export interface PickRow {
   fib_stop: number | null;
   fib_t1: number | null;
   fib_t2: number | null;
+  atr_entry: number | null;
+  atr_stop: number | null;
+  atr_t1: number | null;
+  atr_t2: number | null;
   fib_hit: boolean | null;
   fib_window_high: number | null;
   fib_window_low: number | null;
+  phit: number | null;
   xgb_phit: number | null;
+  xgboost_phit: number | null;
+  ens_phit: number | null;
   pred_lo: number | null;
   pred_mid: number | null;
   pred_hi: number | null;
   pred_mid_pct: number | null;
+  adv_lo: number | null;
+  adv_mid: number | null;
+  adv_hi: number | null;
+  adv_mid_pct: number | null;
+  ev_score: number | null;
   mtf_aligned: boolean | null;
   earnings_soon: boolean | null;
   verdict: string | null;
@@ -117,10 +129,23 @@ export interface MomentumPickRow {
 
   // Gradient-boosted predictions (parallel to logistic — not used for ranking)
   xgb_phit: number | null;
+  xgboost_phit: number | null;
+  ens_phit: number | null;
   pred_lo: number | null;
   pred_mid: number | null;
   pred_hi: number | null;
   pred_mid_pct: number | null;
+  adv_lo: number | null;
+  adv_mid: number | null;
+  adv_hi: number | null;
+  adv_mid_pct: number | null;
+  ev_score: number | null;
+
+  // ATR R-multiple plan (parallel to Fib)
+  atr_entry: number | null;
+  atr_stop: number | null;
+  atr_t1: number | null;
+  atr_t2: number | null;
 
   // Fibonacci plan + whole-day (9:15 → 4 PM) target and hit result
   fib_direction: string | null;
@@ -264,6 +289,15 @@ export interface BoostedRunRow {
   range_test_mae: Record<string, number> | null;
   range_test_coverage: Record<string, number> | null;
   range_importance: BoostedImportanceItem[] | null;
+  adv_n_samples: number | null;
+  adv_mean_excursion: number | null;
+  adv_median_excursion: number | null;
+  adv_test_mae: Record<string, number> | null;
+  adv_test_coverage: Record<string, number> | null;
+  adv_importance: BoostedImportanceItem[] | null;
+  xgb_test_acc: number | null;
+  xgb_test_auc: number | null;
+  xgb_importance: BoostedImportanceItem[] | null;
   selection_bias: MlSelectionBias | null;
 }
 
@@ -331,6 +365,17 @@ export interface AnalyzeFib {
   resistance_1: number | null;
 }
 
+export interface AnalyzeAtr {
+  entry: number | null;
+  stop: number | null;
+  target_1: number | null;
+  target_2: number | null;
+  atr: number | null;
+  r_distance: number | null;
+  multiplier: number | null;
+  direction: string | null;
+}
+
 // Raw payload from the FastAPI /api/signals/{ticker} endpoint.
 export interface AnalyzePayload {
   ticker: string;
@@ -342,6 +387,7 @@ export interface AnalyzePayload {
   conviction: AnalyzeConviction;
   signals: AnalyzeSignal[];
   fib: AnalyzeFib | null;
+  atr?: AnalyzeAtr | null;
   as_of: string;
 }
 

@@ -78,20 +78,20 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
           <div className="fib-row">
             {pick.fib_entry != null && (
               <div className="fib-item">
-                <label>Entry</label>
+                <label>Fib entry</label>
                 <span>{fmtPrice(pick.fib_entry)}</span>
               </div>
             )}
             {pick.fib_stop != null && (
               <div className="fib-item">
-                <label>Stop</label>
+                <label>Fib stop</label>
                 <span>{fmtPrice(pick.fib_stop)}</span>
               </div>
             )}
             {(pick.fib_t1 ?? pick.day_target) != null && (
               <div className="fib-item">
                 <label>
-                  T1
+                  Fib T1
                   {(pick.day_target_label || "")
                     ? ` · ${pick.day_target_label}`
                     : ""}
@@ -101,7 +101,7 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
             )}
             {pick.fib_t2 != null && (
               <div className="fib-item">
-                <label>T2</label>
+                <label>Fib T2</label>
                 <span>{fmtPrice(pick.fib_t2)}</span>
               </div>
             )}
@@ -142,16 +142,66 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
                 <span>{fmtPrice(pick.day_low)}</span>
               </div>
             )}
+          </div>
+        )}
+
+        {(pick.atr_entry != null || pick.atr_stop != null ||
+          pick.atr_t1 != null || pick.atr_t2 != null) && (
+          <div className="fib-row" style={{ marginTop: 4 }}>
+            {pick.atr_entry != null && (
+              <div className="fib-item">
+                <label>ATR entry</label>
+                <span>{fmtPrice(pick.atr_entry)}</span>
+              </div>
+            )}
+            {pick.atr_stop != null && (
+              <div className="fib-item">
+                <label>ATR stop</label>
+                <span>{fmtPrice(pick.atr_stop)}</span>
+              </div>
+            )}
+            {pick.atr_t1 != null && (
+              <div className="fib-item">
+                <label>ATR T1 · 1R</label>
+                <span>{fmtPrice(pick.atr_t1)}</span>
+              </div>
+            )}
+            {pick.atr_t2 != null && (
+              <div className="fib-item">
+                <label>ATR T2 · 2R</label>
+                <span>{fmtPrice(pick.atr_t2)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(pick.pred_mid != null || pick.ens_phit != null || pick.xgb_phit != null ||
+          pick.ev_score != null) && (
+          <div className="fib-row" style={{ marginTop: 4 }}>
             {pick.pred_mid != null && (
               <div className="fib-item">
                 <label>Pred mid</label>
                 <span>{fmtPrice(pick.pred_mid)}</span>
               </div>
             )}
-            {pick.xgb_phit != null && (
+            {pick.ens_phit != null ? (
+              <div className="fib-item">
+                <label>Ens P(hit)</label>
+                <span>{(pick.ens_phit * 100).toFixed(0)}%</span>
+              </div>
+            ) : pick.xgb_phit != null ? (
               <div className="fib-item">
                 <label>Boosted P(hit)</label>
                 <span>{(pick.xgb_phit * 100).toFixed(0)}%</span>
+              </div>
+            ) : null}
+            {pick.ev_score != null && (
+              <div className="fib-item">
+                <label>EV</label>
+                <span className={pick.ev_score >= 0 ? "up" : "down"}>
+                  {pick.ev_score >= 0 ? "+" : ""}
+                  {pick.ev_score.toFixed(1)}%
+                </span>
               </div>
             )}
           </div>

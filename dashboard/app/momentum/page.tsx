@@ -6,6 +6,7 @@ import {
   topMomentumConviction,
 } from "@/lib/momentum-queries";
 import MomentumScanSection from "@/components/MomentumScanSection";
+import StrategyKey from "@/components/StrategyKey";
 import type { MomentumPickRow, MomentumHitStats } from "@/lib/types";
 
 export const revalidate = 60;
@@ -61,7 +62,7 @@ export default async function MomentumTodayPage() {
           <div className="page-title">Daily Scans</div>
           <div className="page-sub">
             {latest
-              ? `Today's run ${latest.et_time} ET · conviction + Fibonacci (daily bars)`
+              ? `Today's run ${latest.et_time} ET · Fib + ATR R-plan (daily bars)`
               : "No run yet today"}
           </div>
         </div>
@@ -75,6 +76,8 @@ export default async function MomentumTodayPage() {
         </div>
       ) : (
         <>
+          <StrategyKey />
+
           <div className="stats-row">
             <div className="stat-card">
               <div className="stat-label">Longs</div>

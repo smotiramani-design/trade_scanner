@@ -6,6 +6,7 @@ import type {
   AnalyzeResult,
   AnalyzePayload,
   AnalyzeFib,
+  AnalyzeAtr,
   AnalyzeSignal,
 } from "@/lib/types";
 import { SIGNAL_ORDER, type SignalChip, type SignalBias } from "@/lib/signals";
@@ -74,11 +75,11 @@ function TargetBlock({ fib, price }: { fib: AnalyzeFib | null; price: number }) 
       </div>
       <div className="target-grid">
         <div>
-          <span className="tg-k">Entry</span>
+          <span className="tg-k">Fib entry</span>
           <span className="tg-v">${fmt(fib.entry_price)}</span>
         </div>
         <div>
-          <span className="tg-k">Stop</span>
+          <span className="tg-k">Fib stop</span>
           <span className="tg-v">${fmt(fib.stop_loss)}</span>
         </div>
         <div>
@@ -86,6 +87,38 @@ function TargetBlock({ fib, price }: { fib: AnalyzeFib | null; price: number }) 
           <span className="tg-v">
             {fib.risk_reward_t1 ? `${fmt(fib.risk_reward_t1, 1)}×` : "—"}
           </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AtrBlock({ atr }: { atr: AnalyzeAtr | null | undefined }) {
+  if (!atr || atr.entry == null || atr.stop == null) return null;
+  return (
+    <div className="target-block" style={{ marginTop: 12 }}>
+      <div className="target-label">ATR R-multiple plan</div>
+      <div className="target-sub">
+        Stop = {fmt(atr.multiplier, 1)}× ATR(14)
+        {atr.r_distance != null ? ` · R = $${fmt(atr.r_distance)}` : ""}
+        {" · parallel to Fib, does not replace it"}
+      </div>
+      <div className="target-grid">
+        <div>
+          <span className="tg-k">ATR entry</span>
+          <span className="tg-v">${fmt(atr.entry)}</span>
+        </div>
+        <div>
+          <span className="tg-k">ATR stop</span>
+          <span className="tg-v">${fmt(atr.stop)}</span>
+        </div>
+        <div>
+          <span className="tg-k">T1 · 1R</span>
+          <span className="tg-v">${fmt(atr.target_1)}</span>
+        </div>
+        <div>
+          <span className="tg-k">T2 · 2R</span>
+          <span className="tg-v">${fmt(atr.target_2)}</span>
         </div>
       </div>
     </div>
@@ -152,6 +185,7 @@ function ResultCard({ data }: { data: AnalyzePayload }) {
       )}
 
       <TargetBlock fib={data.fib} price={data.price} />
+      <AtrBlock atr={data.atr} />
 
       <div className="ac-asof">as of {new Date(data.as_of).toLocaleString()}</div>
     </div>

@@ -73,25 +73,25 @@ export default function PickCard({ pick }: { pick: PickRow }) {
           <div className="fib-row">
             {pick.fib_entry != null && (
               <div className="fib-item">
-                <label>Entry</label>
+                <label>Fib entry</label>
                 <span>{fmtPrice(pick.fib_entry)}</span>
               </div>
             )}
             {pick.fib_stop != null && (
               <div className="fib-item">
-                <label>Stop</label>
+                <label>Fib stop</label>
                 <span>{fmtPrice(pick.fib_stop)}</span>
               </div>
             )}
             {(pick.fib_t1 ?? pick.fib_target) != null && (
               <div className="fib-item">
-                <label>T1{pick.fib_label ? ` · ${pick.fib_label}` : ""}</label>
+                <label>Fib T1{pick.fib_label ? ` · ${pick.fib_label}` : ""}</label>
                 <span>{fmtPrice(pick.fib_t1 ?? pick.fib_target)}</span>
               </div>
             )}
             {pick.fib_t2 != null && (
               <div className="fib-item">
-                <label>T2</label>
+                <label>Fib T2</label>
                 <span>{fmtPrice(pick.fib_t2)}</span>
               </div>
             )}
@@ -102,6 +102,36 @@ export default function PickCard({ pick }: { pick: PickRow }) {
                       style={pick.fib_hit == null ? { color: "var(--muted)" } : undefined}>
                   {pick.fib_hit === true ? "Yes" : pick.fib_hit === false ? "No" : "Pending"}
                 </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(pick.atr_entry != null || pick.atr_stop != null ||
+          pick.atr_t1 != null || pick.atr_t2 != null) && (
+          <div className="fib-row" style={{ marginTop: 4 }}>
+            {pick.atr_entry != null && (
+              <div className="fib-item">
+                <label>ATR entry</label>
+                <span>{fmtPrice(pick.atr_entry)}</span>
+              </div>
+            )}
+            {pick.atr_stop != null && (
+              <div className="fib-item">
+                <label>ATR stop</label>
+                <span>{fmtPrice(pick.atr_stop)}</span>
+              </div>
+            )}
+            {pick.atr_t1 != null && (
+              <div className="fib-item">
+                <label>ATR T1 · 1R</label>
+                <span>{fmtPrice(pick.atr_t1)}</span>
+              </div>
+            )}
+            {pick.atr_t2 != null && (
+              <div className="fib-item">
+                <label>ATR T2 · 2R</label>
+                <span>{fmtPrice(pick.atr_t2)}</span>
               </div>
             )}
           </div>
@@ -127,10 +157,35 @@ export default function PickCard({ pick }: { pick: PickRow }) {
                 <span>{fmtPrice(pick.pred_hi)}</span>
               </div>
             )}
-            {pick.xgb_phit != null && (
+            {pick.ens_phit != null ? (
+              <div className="fib-item">
+                <label>Ens P(hit)</label>
+                <span>{(pick.ens_phit * 100).toFixed(0)}%</span>
+              </div>
+            ) : pick.xgb_phit != null ? (
               <div className="fib-item">
                 <label>Boosted P(hit)</label>
                 <span>{(pick.xgb_phit * 100).toFixed(0)}%</span>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {(pick.adv_mid != null || pick.ev_score != null) && (
+          <div className="fib-row" style={{ marginTop: 4 }}>
+            {pick.adv_mid != null && (
+              <div className="fib-item">
+                <label>Risk mid{pick.adv_mid_pct != null ? ` · ${pick.adv_mid_pct.toFixed(1)}%` : ""}</label>
+                <span>{fmtPrice(pick.adv_mid)}</span>
+              </div>
+            )}
+            {pick.ev_score != null && (
+              <div className="fib-item">
+                <label>EV score</label>
+                <span className={pick.ev_score >= 0 ? "up" : "down"}>
+                  {pick.ev_score >= 0 ? "+" : ""}
+                  {pick.ev_score.toFixed(1)}%
+                </span>
               </div>
             )}
           </div>

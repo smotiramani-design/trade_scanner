@@ -69,7 +69,10 @@ CREATE TABLE IF NOT EXISTS picks (
     fib_validated_at TIMESTAMPTZ,
     mtf_aligned    BOOLEAN,     -- multi-timeframe confirmation
     earnings_soon  BOOLEAN,     -- earnings within 2 days
-    atr_stop       NUMERIC,
+    atr_stop       NUMERIC,     -- ATR stop (1.5×); also atr_entry/t1/t2 for R-plan
+    atr_entry      NUMERIC,     -- ATR plan entry (= scan price)
+    atr_t1         NUMERIC,     -- ATR 1R target
+    atr_t2         NUMERIC,     -- ATR 2R target
     signals        JSONB,       -- {"Candle pattern": {"bias": "bull", "label": "..."}, ...}
     phit           NUMERIC      -- model P(fib target hit), 0–1; drives pick ranking
 );
@@ -109,10 +112,20 @@ ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_t1            NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_t2            NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS phit              NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS xgb_phit          NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS xgboost_phit      NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS ens_phit          NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS pred_lo           NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS pred_mid          NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS pred_hi           NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS pred_mid_pct      NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS adv_lo            NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS adv_mid           NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS adv_hi            NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS adv_mid_pct       NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS ev_score          NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS atr_entry         NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS atr_t1            NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS atr_t2            NUMERIC;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_date DATE;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS et_time    TEXT;
 
@@ -150,14 +163,26 @@ SELECT
     p.fib_stop,
     p.fib_t1,
     p.fib_t2,
+    p.atr_entry,
+    p.atr_stop,
+    p.atr_t1,
+    p.atr_t2,
     p.fib_hit,
     p.fib_window_high,
     p.fib_window_low,
+    p.phit,
     p.xgb_phit,
+    p.xgboost_phit,
+    p.ens_phit,
     p.pred_lo,
     p.pred_mid,
     p.pred_hi,
     p.pred_mid_pct,
+    p.adv_lo,
+    p.adv_mid,
+    p.adv_hi,
+    p.adv_mid_pct,
+    p.ev_score,
     p.mtf_aligned,
     p.earnings_soon,
     p.verdict,
@@ -274,10 +299,21 @@ ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS day_high         NUMERIC;   
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS day_low          NUMERIC;   -- session low  (9:15→4 PM)
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS validated_at     TIMESTAMPTZ;
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS xgb_phit         NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS xgboost_phit     NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS ens_phit         NUMERIC;
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS pred_lo          NUMERIC;
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS pred_mid         NUMERIC;
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS pred_hi          NUMERIC;
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS pred_mid_pct     NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS adv_lo           NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS adv_mid          NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS adv_hi           NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS adv_mid_pct      NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS ev_score         NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS atr_entry        NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS atr_stop         NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS atr_t1           NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS atr_t2           NUMERIC;
 
 CREATE INDEX IF NOT EXISTS idx_momentum_picks_dir ON momentum_picks (trade_date DESC, direction, rank);
 
@@ -317,10 +353,21 @@ SELECT
     p.signals,
     p.phit,
     p.xgb_phit,
+    p.xgboost_phit,
+    p.ens_phit,
     p.pred_lo,
     p.pred_mid,
     p.pred_hi,
     p.pred_mid_pct,
+    p.adv_lo,
+    p.adv_mid,
+    p.adv_hi,
+    p.adv_mid_pct,
+    p.ev_score,
+    p.atr_entry,
+    p.atr_stop,
+    p.atr_t1,
+    p.atr_t2,
     p.fib_direction,
     p.fib_entry,
     p.fib_stop,
@@ -454,8 +501,8 @@ CREATE TABLE IF NOT EXISTS ml_weight_runs (
 CREATE INDEX IF NOT EXISTS idx_ml_weight_runs_ts ON ml_weight_runs (run_ts DESC);
 
 -- ── ML: gradient-boosted model runs (ENH-ML-04) ───────────────────────────────
--- One row per `python -m backtest.boosted_tuner` run. Powers /ml/boosted and
--- /ml/ranges. Parallel to ml_weight_runs — does NOT replace logistic weights.
+-- One row per `python -m backtest.boosted_tuner` run. Powers /ml/boosted,
+-- /ml/ranges, /ml/risk, /ml/ensemble. Parallel to ml_weight_runs.
 CREATE TABLE IF NOT EXISTS ml_boosted_runs (
     id                     BIGSERIAL PRIMARY KEY,
     run_ts                 TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -478,17 +525,46 @@ CREATE TABLE IF NOT EXISTS ml_boosted_runs (
     range_test_mae         JSONB,       -- {"0.25":..,"0.50":..,"0.75":..}
     range_test_coverage    JSONB,       -- empirical quantile coverage
     range_importance       JSONB,
+    adv_n_samples          INT,
+    adv_mean_excursion     NUMERIC,
+    adv_median_excursion   NUMERIC,
+    adv_test_mae           JSONB,
+    adv_test_coverage      JSONB,
+    adv_importance         JSONB,
+    xgb_test_acc           NUMERIC,
+    xgb_test_auc           NUMERIC,
+    xgb_importance         JSONB,
     selection_bias         JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_ml_boosted_runs_ts ON ml_boosted_runs (run_ts DESC);
 
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS adv_n_samples        INT;
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS adv_mean_excursion   NUMERIC;
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS adv_median_excursion NUMERIC;
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS adv_test_mae         JSONB;
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS adv_test_coverage    JSONB;
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS adv_importance       JSONB;
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS xgb_test_acc         NUMERIC;
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS xgb_test_auc         NUMERIC;
+ALTER TABLE ml_boosted_runs ADD COLUMN IF NOT EXISTS xgb_importance       JSONB;
+
 -- Parallel boosted predictions on picks (also listed earlier for view-create order)
 ALTER TABLE picks ADD COLUMN IF NOT EXISTS xgb_phit       NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS xgboost_phit   NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS ens_phit       NUMERIC;
 ALTER TABLE picks ADD COLUMN IF NOT EXISTS pred_lo        NUMERIC;
 ALTER TABLE picks ADD COLUMN IF NOT EXISTS pred_mid       NUMERIC;
 ALTER TABLE picks ADD COLUMN IF NOT EXISTS pred_hi        NUMERIC;
 ALTER TABLE picks ADD COLUMN IF NOT EXISTS pred_mid_pct   NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS adv_lo         NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS adv_mid        NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS adv_hi         NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS adv_mid_pct    NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS ev_score       NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS atr_entry      NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS atr_t1         NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS atr_t2         NUMERIC;
 
 -- Dashboard read access (anon)
 GRANT SELECT ON scan_features, ml_weight_runs, ml_boosted_runs TO anon, authenticated;

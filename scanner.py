@@ -259,9 +259,12 @@ def scan(
             direction=trade_dir,
         )
 
-        # ── ATR-based stop override (ENH-10) ──────────────────────────────────
-        from signals.atr import compute_atr_stop
-        ta.atr_stop = compute_atr_stop(bars, price, ta.net_score, direction=trade_dir)
+        # ── ATR R-multiple plan (parallel to Fib — does not replace it) ───────
+        from signals.atr import compute_atr_plan
+        ta.atr_plan = compute_atr_plan(
+            bars, price, ta.net_score, direction=trade_dir,
+        )
+        ta.atr_stop = ta.atr_plan.stop if ta.atr_plan else None
 
         results.append(ta)
 

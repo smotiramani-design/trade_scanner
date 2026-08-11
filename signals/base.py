@@ -39,7 +39,9 @@ class TickerAnalysis:
     company_name: str = ""                  # e.g. "Apple Inc."
     signals:      List[SignalResult] = field(default_factory=list)
     fib:          Optional[object]   = field(default=None, repr=False)  # FibLevels | None
-    atr_stop:     Optional[float]    = field(default=None, repr=False)  # ENH-10 ATR stop
+    atr_stop:     Optional[float]    = field(default=None, repr=False)  # ATR stop (from atr_plan)
+    atr_plan:     Optional[object]   = field(default=None, repr=False)  # AtrPlan | None (R-multiples)
+
     mtf_aligned:  bool               = field(default=True,  repr=False)  # ENH-16 MTF flag
     mtf_detail:   str                = field(default="",    repr=False)  # ENH-16 MTF detail
     earnings_soon:bool               = field(default=False, repr=False)  # ENH-11 earnings flag

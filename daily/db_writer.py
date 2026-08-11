@@ -55,6 +55,7 @@ def _pick_row(
     fib = getattr(ta, "fib", None)
     day_target = getattr(fib, "next_hour_target", None) if fib else None
     day_label = getattr(fib, "next_hour_label", "") if fib else ""
+    plan = getattr(ta, "atr_plan", None)
     return (
         scan_id, trade_date, et_time,
         ta.ticker, ta.company_name or None, getattr(ta, "sector", "") or None,
@@ -67,10 +68,21 @@ def _pick_row(
         json.dumps(_signals_json(ta)),
         cs.phit,
         cs.xgb_phit,
+        cs.xgboost_phit,
+        cs.ens_phit,
         cs.pred_lo,
         cs.pred_mid,
         cs.pred_hi,
         cs.pred_mid_pct,
+        cs.adv_lo,
+        cs.adv_mid,
+        cs.adv_hi,
+        cs.adv_mid_pct,
+        cs.ev_score,
+        _f(getattr(plan, "entry", None)) if plan else None,
+        _f(getattr(plan, "stop", None) if plan else getattr(ta, "atr_stop", None)),
+        _f(getattr(plan, "target_1", None)) if plan else None,
+        _f(getattr(plan, "target_2", None)) if plan else None,
         getattr(fib, "direction", None) if fib else None,
         _f(getattr(fib, "entry_price", None)) if fib else None,
         _f(getattr(fib, "stop_loss", None)) if fib else None,
@@ -133,10 +145,13 @@ def write_daily_scan(
                        (scan_id, trade_date, et_time, ticker, company, sector, tier,
                         direction, rank, net_score, conviction, grade, price, chg_pct,
                         analysis, key_signals, signals, phit,
-                        xgb_phit, pred_lo, pred_mid, pred_hi, pred_mid_pct,
+                        xgb_phit, xgboost_phit, ens_phit,
+                        pred_lo, pred_mid, pred_hi, pred_mid_pct,
+                        adv_lo, adv_mid, adv_hi, adv_mid_pct, ev_score,
+                        atr_entry, atr_stop, atr_t1, atr_t2,
                         fib_direction, fib_entry, fib_stop, fib_t1, fib_t2, fib_t3,
                         day_target, day_target_label)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     rows,
                 )
 

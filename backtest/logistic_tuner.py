@@ -137,6 +137,22 @@ class LabeledPick:
             return None
         return (float(self.price) - float(self.window_low)) / float(self.price)
 
+    @property
+    def adverse_excursion(self) -> Optional[float]:
+        """
+        Move *against* the trade as a fraction of price (stop-side risk).
+        Bulls: (price − low) / price.  Bears: (high − price) / price.
+        """
+        if self.price is None or self.price <= 0:
+            return None
+        if self.direction == "bull":
+            if self.window_low is None:
+                return None
+            return (float(self.price) - float(self.window_low)) / float(self.price)
+        if self.window_high is None:
+            return None
+        return (float(self.window_high) - float(self.price)) / float(self.price)
+
 
 def _aligned(bias: Optional[str], direction: str) -> int:
     """Encode one signal relative to the pick's trade direction."""
