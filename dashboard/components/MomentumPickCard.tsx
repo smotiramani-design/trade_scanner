@@ -98,7 +98,8 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
         )}
 
         {(pick.fib_entry != null || pick.fib_stop != null ||
-          pick.fib_t1 != null || pick.fib_t2 != null || pick.day_target != null) && (
+          pick.fib_t1 != null || pick.fib_t2 != null || pick.day_target != null ||
+          pick.day_high != null || pick.day_low != null) && (
           <div className="fib-row">
             {pick.fib_entry != null && (
               <div className="fib-item">
@@ -152,6 +153,18 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
                       ? "No"
                       : "Pending"}
                 </span>
+              </div>
+            )}
+            {pick.day_high != null && (
+              <div className="fib-item">
+                <label>Day high</label>
+                <span>{fmtPrice(pick.day_high)}</span>
+              </div>
+            )}
+            {pick.day_low != null && (
+              <div className="fib-item">
+                <label>Day low</label>
+                <span>{fmtPrice(pick.day_low)}</span>
               </div>
             )}
           </div>
