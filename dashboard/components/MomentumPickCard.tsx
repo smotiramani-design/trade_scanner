@@ -142,6 +142,18 @@ export default function MomentumPickCard({ pick }: { pick: MomentumPickRow }) {
                 <span>{fmtPrice(pick.day_low)}</span>
               </div>
             )}
+            {pick.pred_mid != null && (
+              <div className="fib-item">
+                <label>Pred mid</label>
+                <span>{fmtPrice(pick.pred_mid)}</span>
+              </div>
+            )}
+            {pick.xgb_phit != null && (
+              <div className="fib-item">
+                <label>Boosted P(hit)</label>
+                <span>{(pick.xgb_phit * 100).toFixed(0)}%</span>
+              </div>
+            )}
           </div>
         )}
 

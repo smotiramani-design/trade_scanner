@@ -123,6 +123,11 @@ def _pick_row(scan_id: int, ta: TickerAnalysis, cs: ConvictionScore,
         float(atr) if atr else None,
         json.dumps(_signals_json(ta)),
         cs.phit,
+        cs.xgb_phit,
+        cs.pred_lo,
+        cs.pred_mid,
+        cs.pred_hi,
+        cs.pred_mid_pct,
     )
 
 
@@ -253,8 +258,9 @@ def write_scan(
                         net_score, conviction, weighted_score, grade, verdict,
                         analysis, key_signals, conflicting,
                         fib_target, fib_label, fib_entry, fib_stop, fib_t1, fib_t2,
-                        mtf_aligned, earnings_soon, atr_stop, signals, phit)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        mtf_aligned, earnings_soon, atr_stop, signals, phit,
+                        xgb_phit, pred_lo, pred_mid, pred_hi, pred_mid_pct)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     pick_rows,
                 )
 

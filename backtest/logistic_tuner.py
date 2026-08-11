@@ -113,10 +113,29 @@ class LabeledPick:
     atr_stop:      Optional[float] = None
     price:         Optional[float] = None
     was_pick:      Optional[bool] = None  # scan_features only: made the top-N?
+    window_high:   Optional[float] = None  # post-scan window high (for range model)
+    window_low:    Optional[float] = None  # post-scan window low  (for range model)
 
     @property
     def dir_sign(self) -> float:
         return 1.0 if self.direction == "bull" else -1.0
+
+    @property
+    def favorable_excursion(self) -> Optional[float]:
+        """
+        Favourable move as a fraction of price during the Fib validation window.
+        Bulls: (high − price) / price.  Bears: (price − low) / price.
+        None when the window extremes or price are missing.
+        """
+        if self.price is None or self.price <= 0:
+            return None
+        if self.direction == "bull":
+            if self.window_high is None:
+                return None
+            return (float(self.window_high) - float(self.price)) / float(self.price)
+        if self.window_low is None:
+            return None
+        return (float(self.price) - float(self.window_low)) / float(self.price)
 
 
 def _aligned(bias: Optional[str], direction: str) -> int:
@@ -216,7 +235,8 @@ def _load_labeled(table: str, days: Optional[int], conn) -> List[LabeledPick]:
             where += " AND trade_date >= (CURRENT_DATE - %s::int)"
             params.append(int(days))
         cols = ("direction, signals, fib_hit, trade_date, et_time, "
-                "conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price")
+                "conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price, "
+                "fib_window_high, fib_window_low")
         if with_pick:
             cols += ", was_pick"
         sql = (f"SELECT {cols} FROM {table} {where} "
@@ -231,8 +251,9 @@ def _load_labeled(table: str, days: Optional[int], conn) -> List[LabeledPick]:
     picks: List[LabeledPick] = []
     for row in rows:
         (direction, signals, fib_hit, trade_date, et_time,
-         conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price) = row[:11]
-        was_pick = bool(row[11]) if with_pick else None
+         conviction, mtf_aligned, earnings_soon, chg_pct, atr_stop, price,
+         window_high, window_low) = row[:13]
+        was_pick = bool(row[13]) if with_pick else None
         if isinstance(signals, str):
             try:
                 signals = json.loads(signals)
@@ -251,6 +272,8 @@ def _load_labeled(table: str, days: Optional[int], conn) -> List[LabeledPick]:
             atr_stop      = float(atr_stop) if atr_stop is not None else None,
             price         = float(price) if price is not None else None,
             was_pick      = was_pick,
+            window_high   = float(window_high) if window_high is not None else None,
+            window_low    = float(window_low) if window_low is not None else None,
         ))
     log.info("Loaded %d labeled rows from %s.", len(picks), table)
     return picks

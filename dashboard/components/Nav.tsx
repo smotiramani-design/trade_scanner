@@ -24,6 +24,8 @@ const SECTIONS = [
     links: [
       { href: "/ml", label: "Model Weights" },
       { href: "/ml/data", label: "Training Data" },
+      { href: "/ml/boosted", label: "Boosted P(hit)" },
+      { href: "/ml/ranges", label: "Predicted Ranges" },
     ],
   },
   {

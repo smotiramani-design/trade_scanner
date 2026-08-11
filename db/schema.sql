@@ -108,6 +108,11 @@ ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_stop          NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_t1            NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS fib_t2            NUMERIC;
 ALTER TABLE picks  ADD COLUMN IF NOT EXISTS phit              NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS xgb_phit          NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS pred_lo           NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS pred_mid          NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS pred_hi           NUMERIC;
+ALTER TABLE picks  ADD COLUMN IF NOT EXISTS pred_mid_pct      NUMERIC;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_date DATE;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS et_time    TEXT;
 
@@ -148,6 +153,11 @@ SELECT
     p.fib_hit,
     p.fib_window_high,
     p.fib_window_low,
+    p.xgb_phit,
+    p.pred_lo,
+    p.pred_mid,
+    p.pred_hi,
+    p.pred_mid_pct,
     p.mtf_aligned,
     p.earnings_soon,
     p.verdict,
@@ -263,6 +273,11 @@ ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS target_hit       BOOLEAN;   
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS day_high         NUMERIC;   -- session high (9:15→4 PM)
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS day_low          NUMERIC;   -- session low  (9:15→4 PM)
 ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS validated_at     TIMESTAMPTZ;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS xgb_phit         NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS pred_lo          NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS pred_mid         NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS pred_hi          NUMERIC;
+ALTER TABLE momentum_picks ADD COLUMN IF NOT EXISTS pred_mid_pct     NUMERIC;
 
 CREATE INDEX IF NOT EXISTS idx_momentum_picks_dir ON momentum_picks (trade_date DESC, direction, rank);
 
@@ -301,6 +316,11 @@ SELECT
     p.key_signals,
     p.signals,
     p.phit,
+    p.xgb_phit,
+    p.pred_lo,
+    p.pred_mid,
+    p.pred_hi,
+    p.pred_mid_pct,
     p.fib_direction,
     p.fib_entry,
     p.fib_stop,
@@ -433,13 +453,53 @@ CREATE TABLE IF NOT EXISTS ml_weight_runs (
 
 CREATE INDEX IF NOT EXISTS idx_ml_weight_runs_ts ON ml_weight_runs (run_ts DESC);
 
+-- ── ML: gradient-boosted model runs (ENH-ML-04) ───────────────────────────────
+-- One row per `python -m backtest.boosted_tuner` run. Powers /ml/boosted and
+-- /ml/ranges. Parallel to ml_weight_runs — does NOT replace logistic weights.
+CREATE TABLE IF NOT EXISTS ml_boosted_runs (
+    id                     BIGSERIAL PRIMARY KEY,
+    run_ts                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    trade_date             DATE,
+    et_time                TEXT,
+    source                 TEXT,
+    lookback_days          INT,
+    phit_n_samples         INT,
+    phit_n_hits            INT,
+    phit_n_misses          INT,
+    phit_base_rate         NUMERIC,
+    phit_test_acc          NUMERIC,
+    phit_test_auc          NUMERIC,
+    phit_n_train           INT,
+    phit_n_test            INT,
+    phit_importance        JSONB,       -- [{"name","gain"}, ...]
+    range_n_samples        INT,
+    range_mean_excursion   NUMERIC,     -- %
+    range_median_excursion NUMERIC,     -- %
+    range_test_mae         JSONB,       -- {"0.25":..,"0.50":..,"0.75":..}
+    range_test_coverage    JSONB,       -- empirical quantile coverage
+    range_importance       JSONB,
+    selection_bias         JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_ml_boosted_runs_ts ON ml_boosted_runs (run_ts DESC);
+
+-- Parallel boosted predictions on picks (also listed earlier for view-create order)
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS xgb_phit       NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS pred_lo        NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS pred_mid       NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS pred_hi        NUMERIC;
+ALTER TABLE picks ADD COLUMN IF NOT EXISTS pred_mid_pct   NUMERIC;
+
 -- Dashboard read access (anon)
-GRANT SELECT ON scan_features, ml_weight_runs TO anon, authenticated;
+GRANT SELECT ON scan_features, ml_weight_runs, ml_boosted_runs TO anon, authenticated;
 
 ALTER TABLE scan_features  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ml_weight_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ml_boosted_runs ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "anon_read_scan_features"  ON scan_features;
 DROP POLICY IF EXISTS "anon_read_ml_weight_runs" ON ml_weight_runs;
-CREATE POLICY "anon_read_scan_features"  ON scan_features  FOR SELECT TO anon USING (true);
-CREATE POLICY "anon_read_ml_weight_runs" ON ml_weight_runs FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "anon_read_ml_boosted_runs" ON ml_boosted_runs;
+CREATE POLICY "anon_read_scan_features"   ON scan_features   FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_read_ml_weight_runs"  ON ml_weight_runs  FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_read_ml_boosted_runs" ON ml_boosted_runs FOR SELECT TO anon USING (true);

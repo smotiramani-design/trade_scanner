@@ -23,6 +23,11 @@ export interface PickRow {
   fib_hit: boolean | null;
   fib_window_high: number | null;
   fib_window_low: number | null;
+  xgb_phit: number | null;
+  pred_lo: number | null;
+  pred_mid: number | null;
+  pred_hi: number | null;
+  pred_mid_pct: number | null;
   mtf_aligned: boolean | null;
   earnings_soon: boolean | null;
   verdict: string | null;
@@ -109,6 +114,13 @@ export interface MomentumPickRow {
   key_signals: string[] | null;
   signals: Record<string, { bias: string; label: string }> | null;
   phit: number | null;
+
+  // Gradient-boosted predictions (parallel to logistic — not used for ranking)
+  xgb_phit: number | null;
+  pred_lo: number | null;
+  pred_mid: number | null;
+  pred_hi: number | null;
+  pred_mid_pct: number | null;
 
   // Fibonacci plan + whole-day (9:15 → 4 PM) target and hit result
   fib_direction: string | null;
@@ -220,6 +232,38 @@ export interface MlRunRow {
   applied: boolean | null;
   weights: MlWeightItem[] | null;
   context_coefs: MlContextCoef[] | null;
+  selection_bias: MlSelectionBias | null;
+}
+
+// Feature importance entry from a LightGBM dump.
+export interface BoostedImportanceItem {
+  name: string;
+  gain: number;
+}
+
+// One row of ml_boosted_runs — gradient-boosted P(hit) + range model run.
+export interface BoostedRunRow {
+  id: number;
+  run_ts: string;
+  trade_date: string | null;
+  et_time: string | null;
+  source: string | null;
+  lookback_days: number | null;
+  phit_n_samples: number | null;
+  phit_n_hits: number | null;
+  phit_n_misses: number | null;
+  phit_base_rate: number | null;
+  phit_test_acc: number | null;
+  phit_test_auc: number | null;
+  phit_n_train: number | null;
+  phit_n_test: number | null;
+  phit_importance: BoostedImportanceItem[] | null;
+  range_n_samples: number | null;
+  range_mean_excursion: number | null;
+  range_median_excursion: number | null;
+  range_test_mae: Record<string, number> | null;
+  range_test_coverage: Record<string, number> | null;
+  range_importance: BoostedImportanceItem[] | null;
   selection_bias: MlSelectionBias | null;
 }
 

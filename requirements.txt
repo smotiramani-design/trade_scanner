@@ -8,6 +8,7 @@ yfinance>=0.2.36,<0.3        # Yahoo Finance OHLCV bars (fallback + backtesting)
 # ── Machine learning (conviction weight learning) ─────────────────────────────
 # Used by backtest/logistic_tuner.py to learn signal weights from labeled picks.
 scikit-learn>=1.4.0          # L2 logistic regression over the 10-signal vector
+lightgbm>=4.0.0              # gradient-boosted P(hit) + quantile price-range models
 
 # ── Database driver (Supabase / Postgres) ─────────────────────────────────────
 # Needed to read labeled picks for weight learning and to write scan results.

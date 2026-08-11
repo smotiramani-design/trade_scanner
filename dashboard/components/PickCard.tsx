@@ -107,6 +107,35 @@ export default function PickCard({ pick }: { pick: PickRow }) {
           </div>
         )}
 
+        {(pick.pred_lo != null || pick.pred_mid != null || pick.pred_hi != null) && (
+          <div className="fib-row" style={{ marginTop: 4 }}>
+            {pick.pred_lo != null && (
+              <div className="fib-item">
+                <label>Pred lo</label>
+                <span>{fmtPrice(pick.pred_lo)}</span>
+              </div>
+            )}
+            {pick.pred_mid != null && (
+              <div className="fib-item">
+                <label>Pred mid{pick.pred_mid_pct != null ? ` · ${pick.pred_mid_pct.toFixed(1)}%` : ""}</label>
+                <span>{fmtPrice(pick.pred_mid)}</span>
+              </div>
+            )}
+            {pick.pred_hi != null && (
+              <div className="fib-item">
+                <label>Pred hi</label>
+                <span>{fmtPrice(pick.pred_hi)}</span>
+              </div>
+            )}
+            {pick.xgb_phit != null && (
+              <div className="fib-item">
+                <label>Boosted P(hit)</label>
+                <span>{(pick.xgb_phit * 100).toFixed(0)}%</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {pick.fib_target != null && (
           pick.fib_hit === true ? (
           <div className="fib-hit-badge hit">✓ Target hit (before stop)</div>

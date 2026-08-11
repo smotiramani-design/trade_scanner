@@ -66,6 +66,11 @@ def _pick_row(
         json.dumps(cs.key_signals or []),
         json.dumps(_signals_json(ta)),
         cs.phit,
+        cs.xgb_phit,
+        cs.pred_lo,
+        cs.pred_mid,
+        cs.pred_hi,
+        cs.pred_mid_pct,
         getattr(fib, "direction", None) if fib else None,
         _f(getattr(fib, "entry_price", None)) if fib else None,
         _f(getattr(fib, "stop_loss", None)) if fib else None,
@@ -128,9 +133,10 @@ def write_daily_scan(
                        (scan_id, trade_date, et_time, ticker, company, sector, tier,
                         direction, rank, net_score, conviction, grade, price, chg_pct,
                         analysis, key_signals, signals, phit,
+                        xgb_phit, pred_lo, pred_mid, pred_hi, pred_mid_pct,
                         fib_direction, fib_entry, fib_stop, fib_t1, fib_t2, fib_t3,
                         day_target, day_target_label)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     rows,
                 )
 

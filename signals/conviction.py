@@ -69,7 +69,14 @@ class ConvictionScore:
     analysis: str           # paragraph commentary
     key_signals: List[str] = field(default_factory=list)
     conflicting: List[str] = field(default_factory=list)
-    phit: Optional[float] = None   # model P(fib target hit), 0..1; None if no model
+    phit: Optional[float] = None   # logistic P(fib target hit), 0..1
+    # Gradient-boosted models (signals/boosted.py) — parallel to logistic, not
+    # used for ranking. Surfaced on the Boosted Models dashboard pages.
+    xgb_phit: Optional[float] = None          # LightGBM P(hit)
+    pred_lo: Optional[float] = None           # predicted price band low
+    pred_mid: Optional[float] = None
+    pred_hi: Optional[float] = None
+    pred_mid_pct: Optional[float] = None      # median favourable excursion %
 
     @property
     def emoji(self) -> str:
@@ -261,6 +268,37 @@ def _attach_phit(scored: List[Tuple[TickerAnalysis, ConvictionScore]]) -> bool:
     return any_scored
 
 
+def _attach_boosted(scored: List[Tuple[TickerAnalysis, ConvictionScore]]) -> None:
+    """Attach LightGBM P(hit) + price-range preds. Never affects ranking."""
+    try:
+        from signals.boosted import (
+            predict_boosted_phit, predict_price_range,
+            phit_model_available, range_model_available,
+        )
+    except Exception:
+        return
+    have_phit = phit_model_available()
+    have_range = range_model_available()
+    if not have_phit and not have_range:
+        return
+    for ta, cs in scored:
+        if have_phit and cs.xgb_phit is None:
+            try:
+                cs.xgb_phit = predict_boosted_phit(ta, cs)
+            except Exception:
+                pass
+        if have_range and cs.pred_mid is None:
+            try:
+                band = predict_price_range(ta, cs)
+                if band:
+                    cs.pred_lo = band["lo"]
+                    cs.pred_mid = band["mid"]
+                    cs.pred_hi = band["hi"]
+                    cs.pred_mid_pct = band["mid_pct"]
+            except Exception:
+                pass
+
+
 def top_picks(results: List[TickerAnalysis], n: int = 5) -> Tuple[
         List[Tuple[TickerAnalysis, ConvictionScore]],
         List[Tuple[TickerAnalysis, ConvictionScore]]]:
@@ -275,6 +313,7 @@ def top_picks(results: List[TickerAnalysis], n: int = 5) -> Tuple[
     """
     scored = [(ta, score_conviction(ta)) for ta in results]
     use_phit = _attach_phit(scored)
+    _attach_boosted(scored)  # parallel models — never changes ranking
 
     def _key(item: Tuple[TickerAnalysis, ConvictionScore]):
         cs = item[1]
